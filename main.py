@@ -3,7 +3,7 @@ import re
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 
-import requests
+import requests  # <-- THIS WAS MISSING AND CAUSED THE BUILD FAILURE
 from fastapi import FastAPI, Request, Response
 from sqlalchemy.orm import Session
 from telegram import Update
@@ -51,7 +51,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text("🔄 Checking assignments...")
 
     try:
-        # Pass payload straight to parser to decide between text parsing vs network fetching
         count = sync_moodle_calendar(db, chat_id, text_payload)
         
         if count == 0:
@@ -63,11 +62,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
     except ValueError:
         db.rollback()
-        # Triggered if data block lacks 'BEGIN:VCALENDAR' entirely
         await update.message.reply_text("Please enter a valid link or calendar text content.")
     except requests.RequestException:
         db.rollback()
-        # Triggered if url fails handshake due to data center IP blacklist
         await update.message.reply_text(
             "Network connection blocked by university firewall. "
             "Please copy and paste the raw text inside your downloaded (.ics) file directly here!"
