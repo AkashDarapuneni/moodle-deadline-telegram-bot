@@ -1,83 +1,97 @@
-import logging
-from datetime import date, datetime, timezone
-from io import BytesIO
+import os
+import re
+from contextlib import asynccontextmanager
+from http import HTTPStatus
 
 import requests
-from icalendar import Calendar
-from sqlalchemy import select
+from fastapi import FastAPI, Request, Response
 from sqlalchemy.orm import Session
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from database import Deadline
+from database import SessionLocal, User, engine, Base
+from parser import sync_moodle_calendar
 
-# Initialize logging to show inside Render console
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-def _to_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 
-
-def _parse_due_date(raw_dt: datetime | date) -> datetime:
-    if isinstance(raw_dt, datetime):
-        return _to_utc(raw_dt)
-    return datetime(raw_dt.year, raw_dt.month, raw_dt.day, tzinfo=timezone.utc)
+application = (
+    Application.builder()
+    .token(TELEGRAM_BOT_TOKEN)
+    .updater(None)
+    .build()
+)
 
 
-def sync_moodle_calendar(db_session: Session, telegram_chat_id: int, url: str) -> int:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+def extract_url(text: str) -> str | None:
+    match = URL_PATTERN.search(text.strip())
+    if not match:
+        return None
+    return match.group(0).rstrip(".,)")
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Welcome to the Moodle Deadline Tracker.\n\n"
+        "I monitor your Moodle assignment deadlines and send timely reminders before they are due.\n\n"
+        "To get started, please reply with your Moodle Calendar (.ics) link."
+    )
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.text:
+        return
+
+    text_payload = update.message.text.strip()
+    chat_id = update.effective_chat.id
+    db = SessionLocal()
+
+    await update.message.reply_text("🔄 Checking assignments...")
+
+    try:
+        count = sync_moodle_calendar(db, chat_id, text_payload)
+        
+        if count == 0:
+            await update.message.reply_text("No upcoming assignments.")
+        else:
+            await update.message.reply_text(
+                f"✅ Sync complete! Found {count} upcoming assignments and scheduled your alerts."
+            )
+            
+    except (requests.RequestException, ValueError):
+        db.rollback()
+        await update.message.reply_text("Please enter a valid link.")
+    except Exception:
+        db.rollback()
+        await update.message.reply_text("Something went wrong. Please try again later.")
+    finally:
+        db.close()
+
+
+application.add_handler(CommandHandler("start", start_command))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    Base.metadata.create_all(bind=engine)
     
-    response = requests.get(url, headers=headers, timeout=30)
-    response.raise_for_status()
+    if WEBHOOK_URL:
+        target_url = WEBHOOK_URL if WEBHOOK_URL.endswith("/webhook") else f"{WEBHOOK_URL.rstrip('/')}/webhook"
+        await application.bot.set_webhook(url=target_url)
+    async with application:
+        await application.start()
+        yield
+        await application.stop()
 
-    # 🛠️ DIAGNOSTIC LOGGING: If KLU returns an error or login page, print it to Render logs
-    if "BEGIN:VCALENDAR" not in response.text:
-        logger.error("--- INVALID FORMAT RECEIVED FROM LMS ---")
-        logger.error(f"HTTP Status Code: {response.status_code}")
-        logger.error(f"Content Snippet (First 500 chars): {response.text[:500]}")
-        raise ValueError("Invalid calendar data format returned from LMS.")
 
-    calendar = Calendar.from_ical(BytesIO(response.content))
-    now_utc = datetime.now(timezone.utc)
-    synced_count = 0
+app = FastAPI(lifespan=lifespan)
 
-    for component in calendar.walk():
-        if component.name != "VEVENT":
-            continue
 
-        summary = component.get("summary")
-        dtstart = component.get("dtstart")
-        if not summary or not dtstart:
-            continue
-
-        title = str(summary)
-        due_date = _parse_due_date(dtstart.dt)
-
-        if due_date < now_utc:
-            continue
-
-        existing = db_session.scalar(
-            select(Deadline).where(
-                Deadline.telegram_chat_id == telegram_chat_id,
-                Deadline.assignment_title == title,
-            )
-        )
-
-        if existing is None:
-            db_session.add(
-                Deadline(
-                    telegram_chat_id=telegram_chat_id,
-                    assignment_title=title,
-                    due_date=due_date,
-                )
-            )
-        elif existing.due_date != due_date:
-            existing.due_date = due_date
-
-        synced_count += 1
-
-    db_session.commit()
-    return synced_count
+@app.post("/webhook")
+async def webhook(request: Request) -> Response:
+    update = Update.de_json(await request.json(), application.bot)
+    await application.process_update(update)
+    return Response(status_code=HTTPStatus.OK)

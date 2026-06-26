@@ -1,4 +1,3 @@
-# Version 1.0.2 - Custom Messaging Operational Release
 import os
 import re
 from contextlib import asynccontextmanager
@@ -54,7 +53,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         count = sync_moodle_calendar(db, chat_id, text_payload)
         
-        # Display customized empty state vs assignment list size confirmation
         if count == 0:
             await update.message.reply_text("No upcoming assignments.")
         else:
@@ -63,7 +61,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             
     except (requests.RequestException, ValueError):
-        # Fallback to strict prompt error if parsing or fetching fails
         db.rollback()
         await update.message.reply_text("Please enter a valid link.")
     except Exception:
@@ -79,7 +76,6 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Dynamically verify and spin up structural tables on engine connection
     Base.metadata.create_all(bind=engine)
     
     if WEBHOOK_URL:
