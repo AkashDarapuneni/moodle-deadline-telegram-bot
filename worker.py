@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time  # <-- ADDED FOR STARTUP DELAY
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -85,8 +86,12 @@ def check_and_send_alerts() -> None:
 
 
 if __name__ == "__main__":
-    logger.info("Starting alert worker")
+    logger.info("Starting alert worker - waiting 10 seconds for database initialization...")
+    time.sleep(10)  # <-- 🛠️ FIX: Gives Uvicorn time to create tables first
+    
     scheduler = BlockingScheduler()
     scheduler.add_job(check_and_send_alerts, "interval", minutes=5)
+    
+    # Run an immediate check once the sleep completes
     check_and_send_alerts()
     scheduler.start()
