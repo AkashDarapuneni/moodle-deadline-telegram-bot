@@ -36,7 +36,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "Welcome to the Moodle Deadline Tracker.\n\n"
         "I monitor your Moodle assignment deadlines and send timely reminders before they are due.\n\n"
-        "To get started, please reply with your Moodle Calendar (.ics) link."
+        "To get started, please reply with your Moodle Calendar (.ics) link or paste the text content from the file."
     )
 
 
@@ -51,6 +51,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text("🔄 Checking assignments...")
 
     try:
+        # Pass payload straight to parser to decide between text parsing vs network fetching
         count = sync_moodle_calendar(db, chat_id, text_payload)
         
         if count == 0:
@@ -60,9 +61,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"✅ Sync complete! Found {count} upcoming assignments and scheduled your alerts."
             )
             
-    except (requests.RequestException, ValueError):
+    except ValueError:
         db.rollback()
-        await update.message.reply_text("Please enter a valid link.")
+        # Triggered if data block lacks 'BEGIN:VCALENDAR' entirely
+        await update.message.reply_text("Please enter a valid link or calendar text content.")
+    except requests.RequestException:
+        db.rollback()
+        # Triggered if url fails handshake due to data center IP blacklist
+        await update.message.reply_text(
+            "Network connection blocked by university firewall. "
+            "Please copy and paste the raw text inside your downloaded (.ics) file directly here!"
+        )
     except Exception:
         db.rollback()
         await update.message.reply_text("Something went wrong. Please try again later.")
