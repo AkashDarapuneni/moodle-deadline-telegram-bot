@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-# --- ADDED engine AND Base TO THE IMPORT ---
 from database import SessionLocal, User, engine, Base
 from parser import sync_moodle_calendar
 
@@ -96,7 +95,6 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # --- 🛠️ FIX: FORCE TABLE CREATION ON CLOUD DATABASE ---
     Base.metadata.create_all(bind=engine)
     
     if WEBHOOK_URL:

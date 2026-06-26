@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-import time  # <-- ADDED FOR STARTUP DELAY
+import time  # For startup delay
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from telegram import Bot
 from telegram.error import TelegramError
 
+# Ensure these match your database.py file exactly
 from database import Deadline, SessionLocal, engine
 
 logging.basicConfig(level=logging.INFO)
@@ -87,7 +88,7 @@ def check_and_send_alerts() -> None:
 
 if __name__ == "__main__":
     logger.info("Starting alert worker - waiting 10 seconds for database initialization...")
-    time.sleep(10)  # <-- 🛠️ FIX: Gives Uvicorn time to create tables first
+    time.sleep(10)  # Gives Uvicorn time to create tables first
     
     scheduler = BlockingScheduler()
     scheduler.add_job(check_and_send_alerts, "interval", minutes=5)

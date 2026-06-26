@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timezone
 from io import BytesIO
 
@@ -8,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from database import Deadline
 
+# Initialize logging to show inside Render console
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def _to_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -20,19 +24,20 @@ def _parse_due_date(raw_dt: datetime | date) -> datetime:
         return _to_utc(raw_dt)
     return datetime(raw_dt.year, raw_dt.month, raw_dt.day, tzinfo=timezone.utc)
 
+
 def sync_moodle_calendar(db_session: Session, telegram_chat_id: int, url: str) -> int:
-    # 🛠️ FIX: Tell KLU's server that this request is coming from a standard web browser
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    # Pass the headers into the get request
     response = requests.get(url, headers=headers, timeout=30)
     response.raise_for_status()
 
-    # Debugging check: If the university redirects to a login page, capture it safely
+    # 🛠️ DIAGNOSTIC LOGGING: If KLU returns an error or login page, print it to Render logs
     if "BEGIN:VCALENDAR" not in response.text:
-        logger.error("LMS URL returned invalid content format instead of iCalendar data.")
+        logger.error("--- INVALID FORMAT RECEIVED FROM LMS ---")
+        logger.error(f"HTTP Status Code: {response.status_code}")
+        logger.error(f"Content Snippet (First 500 chars): {response.text[:500]}")
         raise ValueError("Invalid calendar data format returned from LMS.")
 
     calendar = Calendar.from_ical(BytesIO(response.content))
@@ -58,7 +63,7 @@ def sync_moodle_calendar(db_session: Session, telegram_chat_id: int, url: str) -
             select(Deadline).where(
                 Deadline.telegram_chat_id == telegram_chat_id,
                 Deadline.assignment_title == title,
-                )
+            )
         )
 
         if existing is None:
