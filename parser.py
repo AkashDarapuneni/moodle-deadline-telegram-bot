@@ -20,10 +20,20 @@ def _parse_due_date(raw_dt: datetime | date) -> datetime:
         return _to_utc(raw_dt)
     return datetime(raw_dt.year, raw_dt.month, raw_dt.day, tzinfo=timezone.utc)
 
-
 def sync_moodle_calendar(db_session: Session, telegram_chat_id: int, url: str) -> int:
-    response = requests.get(url, timeout=30)
+    # 🛠️ FIX: Tell KLU's server that this request is coming from a standard web browser
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    # Pass the headers into the get request
+    response = requests.get(url, headers=headers, timeout=30)
     response.raise_for_status()
+
+    # Debugging check: If the university redirects to a login page, capture it safely
+    if "BEGIN:VCALENDAR" not in response.text:
+        logger.error("LMS URL returned invalid content format instead of iCalendar data.")
+        raise ValueError("Invalid calendar data format returned from LMS.")
 
     calendar = Calendar.from_ical(BytesIO(response.content))
     now_utc = datetime.now(timezone.utc)
@@ -48,7 +58,7 @@ def sync_moodle_calendar(db_session: Session, telegram_chat_id: int, url: str) -
             select(Deadline).where(
                 Deadline.telegram_chat_id == telegram_chat_id,
                 Deadline.assignment_title == title,
-            )
+                )
         )
 
         if existing is None:
