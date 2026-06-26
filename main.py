@@ -32,20 +32,10 @@ def extract_url(text: str) -> str | None:
     return match.group(0).rstrip(".,)")
 
 
-def upsert_user(db: Session, telegram_chat_id: int, moodle_url: str) -> None:
-    user = db.get(User, telegram_chat_id)
-    if user is None:
-        db.add(User(telegram_chat_id=telegram_chat_id, moodle_url=moodle_url))
-    else:
-        user.moodle_url = moodle_url
-    db.commit()
-
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Welcome to the Moodle Deadline Tracker.\n\n"
-        "I monitor your Moodle assignment deadlines and send timely reminders "
-        "before they are due.\n\n"
+        "I monitor your Moodle assignment deadlines and send timely reminders before they are due.\n\n"
         "To get started, please reply with your Moodle Calendar (.ics) link."
     )
 
@@ -54,37 +44,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message or not update.message.text:
         return
 
-    url = extract_url(update.message.text)
-    if not url:
-        await update.message.reply_text(
-            "Please send a valid Moodle calendar link starting with http:// or https://."
-        )
-        return
-
+    text_payload = update.message.text.strip()
     chat_id = update.effective_chat.id
     db = SessionLocal()
 
+    await update.message.reply_text("🔄 Checking assignments...")
+
     try:
-        upsert_user(db, chat_id, url)
-        count = sync_moodle_calendar(db, chat_id, url)
-        await update.message.reply_text(
-            f"🔄 Sync complete! Found {count} upcoming assignments."
-        )
-    except requests.RequestException:
+        count = sync_moodle_calendar(db, chat_id, text_payload)
+        
+        # Display customized empty state vs assignment list size confirmation
+        if count == 0:
+            await update.message.reply_text("No upcoming assignments.")
+        else:
+            await update.message.reply_text(
+                f"✅ Sync complete! Found {count} upcoming assignments and scheduled your alerts."
+            )
+            
+    except (requests.RequestException, ValueError):
+        # Fallback to strict prompt error if parsing or fetching fails
         db.rollback()
-        await update.message.reply_text(
-            "I couldn't fetch that calendar link. Please verify the URL is correct and try again."
-        )
-    except ValueError:
-        db.rollback()
-        await update.message.reply_text(
-            "That link doesn't appear to be a valid calendar file. Please check the URL and try again."
-        )
+        await update.message.reply_text("Please enter a valid link.")
     except Exception:
         db.rollback()
-        await update.message.reply_text(
-            "Something went wrong while syncing your calendar. Please try again later."
-        )
+        await update.message.reply_text("Something went wrong. Please try again later.")
     finally:
         db.close()
 
@@ -95,10 +78,12 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Dynamically verify and spin up structural tables on engine connection
     Base.metadata.create_all(bind=engine)
     
     if WEBHOOK_URL:
-        await application.bot.set_webhook(url=WEBHOOK_URL)
+        target_url = WEBHOOK_URL if WEBHOOK_URL.endswith("/webhook") else f"{WEBHOOK_URL.rstrip('/')}/webhook"
+        await application.bot.set_webhook(url=target_url)
     async with application:
         await application.start()
         yield
