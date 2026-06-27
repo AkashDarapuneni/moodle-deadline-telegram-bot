@@ -1,4 +1,4 @@
-# Version 1.0.4 - Production AI Integration Release
+# Version 1.0.5 - Smart Session Persistence Edition
 import os
 import re
 from contextlib import asynccontextmanager
@@ -31,8 +31,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "Welcome to your AI Moodle Tracker!\n\n"
         "✨ **What I can do:**\n"
-        "1. Sync deadlines: Just paste your raw Moodle calendar text starting with `BEGIN:VCALENDAR`.\n"
-        "2. Ask me anything: Ask about 'this week's assignments', 'particular subject status', or 'overdue items' naturally!"
+        "1. Sync deadlines: Paste your Moodle link or raw calendar text starting with `BEGIN:VCALENDAR` once.\n"
+        "2. Ask me anything: Talk naturally about your upcoming milestones, ALMs, or homework anytime!"
     )
 
 
@@ -44,21 +44,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_chat.id
     db = SessionLocal()
 
-    # SCENARIO A: User is uploading/pasting a calendar file data dump
+    # SCENARIO A: User is updating/pasting a calendar file data dump or link
     if "BEGIN:VCALENDAR" in text_payload or text_payload.startswith(("http://", "https://")):
         await update.message.reply_text("🔄 Syncing your calendar milestones...")
         try:
+            # Check if it's a URL to track link status
+            is_url = text_payload.startswith(("http://", "https://"))
+            
+            # Upsert or update User metadata record
+            user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+            if not user:
+                user = User(telegram_chat_id=chat_id)
+                db.add(user)
+            
+            if is_url:
+                user.calendar_link = text_payload  # Track their live link source
+                
             count = sync_moodle_calendar(db, chat_id, text_payload)
+            user.last_sync_success = True
+            db.commit()
+
             if count == 0:
-                await update.message.reply_text("Your calendar structural file is valid but contains 0 upcoming events.")
+                await update.message.reply_text("✅ Sync complete! Your calendar is linked, but it currently contains 0 upcoming assignments.")
             else:
                 await update.message.reply_text(f"✅ Sync complete! Tracked {count} upcoming milestones successfully.")
+                
         except ValueError:
             db.rollback()
             await update.message.reply_text("Please enter a valid link or structural calendar text content.")
         except requests.RequestException:
             db.rollback()
-            await update.message.reply_text("Network connection blocked by university firewall. Please copy and paste raw text dump directly here!")
+            # If a previously working link fails execution due to token expiry/auth changes
+            await update.message.reply_text(
+                "❌ Network connection failed or link has expired!\n"
+                "Please verify your Moodle authentication token or copy-paste the raw text content inside your downloaded (.ics) file directly here."
+            )
         except Exception:
             db.rollback()
             await update.message.reply_text("Something went wrong with parsing. Please try again.")
@@ -66,7 +86,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             db.close()
         return
 
-    # SCENARIO B: Conversational Assistant Query (Handling student questions using AI)
+    # SCENARIO B: Conversational Assistant Query
     local_api_key = os.getenv("GEMINI_API_KEY")
     if not local_api_key:
         await update.message.reply_text("AI features are currently unavailable. Ensure GEMINI_API_KEY is configured on Render.")
@@ -74,37 +94,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     try:
-        # Initialize client dynamically inside request boundary scope to catch hot-reloads
         current_ai_client = genai.Client(api_key=local_api_key)
         
-        # 1. Fetch user's stored tracking deadlines from database to give AI context
+        # Check user registration status to give the AI context about their profile history
+        user_record = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+        has_synced_before = user_record is not None
+        
+        # Fetch user's stored tracking deadlines from database
         stmt = select(Deadline).where(Deadline.telegram_chat_id == chat_id).order_by(Deadline.due_date)
         deadlines = db.scalars(stmt).all()
         
         current_time_str = datetime.now(timezone.utc).strftime("%A, %B %d, %Y at %I:%M %p UTC")
         
-        # 2. Build the structural background context block
         context_lines = []
         for d in deadlines:
             context_lines.append(f"- Subject/Task: {d.assignment_title} | Absolute Deadline: {d.due_date.strftime('%Y-%m-%d %H:%M UTC')}")
         
-        deadline_context = "\n".join(context_lines) if context_lines else "No upcoming deadlines tracked yet."
+        deadline_context = "\n".join(context_lines) if context_lines else "No upcoming deadlines tracked right now."
 
-        # 3. Formulate structural context guidelines for the LLM core processor
+        # System instructions enforcing contextual persistence rules
         system_instruction = (
-            "You are an empathetic, sharp academic assistant for university students. "
-            "You answer questions regarding homework, quizzes, ALMs (Active Learning Modules), and home assignments based STRICTLY on the student data provided below.\n\n"
+            "You are an empathetic, sharp academic assistant for university students.\n\n"
             f"Current Timestamp context: {current_time_str}\n"
+            f"User Profile Synced Status: {'YES, has synced calendar before' if has_synced_before else 'NO, never synced dynamic calendar data'}\n"
             f"Student's Tracked Deadlines:\n{deadline_context}\n\n"
             "Guidelines:\n"
             "- Be concise, direct, and conversational.\n"
-            "- If a student asks about 'this week', evaluate deadlines relative to the current timestamp.\n"
-            "- If a deadline's date has passed compared to the current timestamp, flag it clearly as OVERDUE.\n"
-            "- Answer questions about specific subjects by parsing titles (e.g., matching 'DBMS' or 'Java').\n"
-            "- If no data matches or list is empty, remind them gently to paste their calendar text dump first."
+            "- CRITICAL: If 'User Profile Synced Status' is YES, do NOT ask them to paste their calendar or link again. "
+            "They have already registered! If their deadline list is empty, simply inform them nicely that they are completely caught up and have no upcoming tasks scheduled on Moodle.\n"
+            "- Only if 'User Profile Synced Status' is NO, gently instruct them to paste their calendar link or text to get started.\n"
+            "- Answer questions about specific subjects naturally by parsing context titles."
         )
 
-        # 4. Request generation using the active client instance
         response = current_ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=text_payload,
