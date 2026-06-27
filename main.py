@@ -1,4 +1,4 @@
-# Version 1.0.3 - AI Integration Enhanced Edition
+# Version 1.0.4 - Production AI Integration Release
 import os
 import re
 from contextlib import asynccontextmanager
@@ -11,17 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from google import genai  # <-- Added Gemini SDK
+from google import genai
 
 from database import SessionLocal, User, engine, Base, Deadline
 from parser import sync_moodle_calendar
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Initialize Gemini Client
-ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 application = (
     Application.builder()
@@ -71,12 +67,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # SCENARIO B: Conversational Assistant Query (Handling student questions using AI)
-    if not ai_client:
+    local_api_key = os.getenv("GEMINI_API_KEY")
+    if not local_api_key:
         await update.message.reply_text("AI features are currently unavailable. Ensure GEMINI_API_KEY is configured on Render.")
         db.close()
         return
 
     try:
+        # Initialize client dynamically inside request boundary scope to catch hot-reloads
+        current_ai_client = genai.Client(api_key=local_api_key)
+        
         # 1. Fetch user's stored tracking deadlines from database to give AI context
         stmt = select(Deadline).where(Deadline.telegram_chat_id == chat_id).order_by(Deadline.due_date)
         deadlines = db.scalars(stmt).all()
@@ -104,8 +104,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "- If no data matches or list is empty, remind them gently to paste their calendar text dump first."
         )
 
-        # 4. Request generation from Gemini Core
-        response = ai_client.models.generate_content(
+        # 4. Request generation using the active client instance
+        response = current_ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=text_payload,
             config={'system_instruction': system_instruction}
@@ -113,7 +113,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         await update.message.reply_text(response.text, parse_mode="Markdown")
 
-    except Exception as e:
+    except Exception:
         await update.message.reply_text("I couldn't process that query right now. Please try again in a moment.")
     finally:
         db.close()
