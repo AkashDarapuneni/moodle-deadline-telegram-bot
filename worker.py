@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import os
-import time  # For startup delay
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.blocking import BlockingScheduler
-from sqlalchemy import select
+from sqlalchemy import select, text
 from telegram import Bot
 from telegram.error import TelegramError
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Ensure these match your database.py file exactly
 from database import Deadline, SessionLocal, engine
@@ -86,13 +86,27 @@ def check_and_send_alerts() -> None:
         db.close()
 
 
+# ADDED: Retry logic for database cold starts
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=4, max=30)
+)
+def wait_for_db():
+    logger.info("Attempting to connect to the database...")
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    logger.info("Database connection established!")
+
+
 if __name__ == "__main__":
-    logger.info("Starting alert worker - waiting 10 seconds for database initialization...")
-    time.sleep(10)  # Gives Uvicorn time to create tables first
+    logger.info("Starting alert worker - waiting for database initialization...")
+    
+    # Replaced time.sleep(10) with smart retry
+    wait_for_db() 
     
     scheduler = BlockingScheduler()
     scheduler.add_job(check_and_send_alerts, "interval", minutes=5)
     
-    # Run an immediate check once the sleep completes
+    # Run an immediate check once the DB is verified alive
     check_and_send_alerts()
     scheduler.start()
