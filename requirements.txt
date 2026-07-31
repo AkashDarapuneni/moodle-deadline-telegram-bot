@@ -7,3 +7,4 @@ python-telegram-bot
 requests
 icalendar
 google-genai
+tenacity
