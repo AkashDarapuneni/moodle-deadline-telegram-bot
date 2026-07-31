@@ -1,8 +1,7 @@
 import os
-from urllib.parse import parse_qsl, urlparse
 from datetime import datetime, timezone
-
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 DATABASE_URL = os.getenv(
@@ -10,30 +9,18 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg2://postgres:postgres@localhost:5432/moodle_bot",
 )
 
-# Parse URL and handle schema conversions for psycopg2
-parsed_url = urlparse(DATABASE_URL)
-scheme = parsed_url.scheme
+# Use SQLAlchemy's robust URL parser to cleanly handle credentials, drivers, and query params
+url = make_url(DATABASE_URL)
 
-if scheme.startswith("postgres"):
-    if not scheme.endswith("+psycopg2"):
-        scheme = "postgresql+psycopg2"
-else:
-    scheme = "postgresql+psycopg2"
+if url.drivername.startswith("postgres") and not url.drivername.endswith("+psycopg2"):
+    url = url.set(drivername="postgresql+psycopg2")
 
-# Extract query parameters (e.g. sslmode=require) to pass via connect_args
-query_params = dict(parse_qsl(parsed_url.query))
-connect_args = {}
-if "sslmode" in query_params:
-    connect_args["sslmode"] = query_params["sslmode"]
-elif "render.com" in parsed_url.netloc:
+# Ensure sslmode is set for Render if not already specified
+connect_args = url.query.copy()
+if "render.com" in url.host and "sslmode" not in connect_args:
     connect_args["sslmode"] = "require"
 
-# Reconstruct clean base URL without query strings
-clean_netloc = parsed_url.netloc.split("?")[0]
-clean_path = parsed_url.path.split("?")[0]
-clean_url = f"{scheme}://{parsed_url.user}:{parsed_url.password}@{clean_netloc}{clean_path}"
-
-engine = create_engine(clean_url, connect_args=connect_args, pool_pre_ping=True)
+engine = create_engine(url, connect_args=connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
