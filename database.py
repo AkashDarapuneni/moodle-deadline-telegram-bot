@@ -11,16 +11,21 @@ DATABASE_URL = os.getenv(
 
 url = make_url(DATABASE_URL)
 
-# Ensure the correct PyMySQL driver is used
 if url.drivername == "mysql":
     url = url.set(drivername="mysql+pymysql")
 
-# pool_recycle=300 is essential for MySQL to prevent "MySQL server has gone away" errors
+# TiDB requires SSL; pass it via connect_args for PyMySQL
+connect_args = {}
+if "tidbcloud.com" in DATABASE_URL:
+    connect_args["ssl"] = {}
+
 engine = create_engine(
     url, 
     pool_pre_ping=True,
-    pool_recycle=300
+    pool_recycle=300,
+    connect_args=connect_args
 )
+
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
@@ -32,7 +37,6 @@ class User(Base):
     __tablename__ = "users"
 
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    # MySQL requires a character limit for String columns
     moodle_url: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -50,7 +54,6 @@ class Deadline(Base):
         ForeignKey("users.telegram_chat_id", ondelete="CASCADE"),
         nullable=False,
     )
-    # MySQL requires a character limit for String columns
     assignment_title: Mapped[str] = mapped_column(String(255), nullable=False)
     due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     sent_24h_alert: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
