@@ -17,10 +17,16 @@ if url.drivername.startswith("postgres") and not url.drivername.endswith("+psyco
 
 # Ensure sslmode is set for Render if not already specified
 connect_args = url.query.copy()
-if "render.com" in url.host and "sslmode" not in connect_args:
+if url.host and "render.com" in url.host and "sslmode" not in connect_args:
     connect_args["sslmode"] = "require"
 
-engine = create_engine(url, connect_args=connect_args, pool_pre_ping=True)
+# ADDED pool_recycle=300 to drop stale connections before Render kills them
+engine = create_engine(
+    url, 
+    connect_args=connect_args, 
+    pool_pre_ping=True,
+    pool_recycle=300
+)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
