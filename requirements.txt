@@ -1,11 +1,9 @@
 fastapi
 uvicorn
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+APScheduler==3.10.4
 python-telegram-bot
 requests
 icalendar
-sqlalchemy
-psycopg2-binary
 google-genai
-APScheduler==3.10.4
-psycopg2-binary==2.9.9
-sqlalchemy==2.0.25
