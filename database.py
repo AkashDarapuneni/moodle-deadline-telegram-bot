@@ -1,4 +1,5 @@
 import os
+from urllib.parse import parse_qsl, urlparse
 from datetime import datetime, timezone
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, create_engine
@@ -9,18 +10,30 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg2://postgres:postgres@localhost:5432/moodle_bot",
 )
 
-# Ensure the URL uses psycopg2 and handles Render SSL requirements
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
-elif DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+# Parse URL and handle schema conversions for psycopg2
+parsed_url = urlparse(DATABASE_URL)
+scheme = parsed_url.scheme
 
-# Pass connect_args to explicitly handle SSL requirement for Render
+if scheme.startswith("postgres"):
+    if not scheme.endswith("+psycopg2"):
+        scheme = "postgresql+psycopg2"
+else:
+    scheme = "postgresql+psycopg2"
+
+# Extract query parameters (e.g. sslmode=require) to pass via connect_args
+query_params = dict(parse_qsl(parsed_url.query))
 connect_args = {}
-if "render.com" in DATABASE_URL:
+if "sslmode" in query_params:
+    connect_args["sslmode"] = query_params["sslmode"]
+elif "render.com" in parsed_url.netloc:
     connect_args["sslmode"] = "require"
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
+# Reconstruct clean base URL without query strings
+clean_netloc = parsed_url.netloc.split("?")[0]
+clean_path = parsed_url.path.split("?")[0]
+clean_url = f"{scheme}://{parsed_url.user}:{parsed_url.password}@{clean_netloc}{clean_path}"
+
+engine = create_engine(clean_url, connect_args=connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
