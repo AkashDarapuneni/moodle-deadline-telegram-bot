@@ -1,4 +1,5 @@
 import os
+import ssl
 from datetime import datetime, timezone
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, create_engine
 from sqlalchemy.engine import make_url
@@ -14,10 +15,11 @@ url = make_url(DATABASE_URL)
 if url.drivername == "mysql":
     url = url.set(drivername="mysql+pymysql")
 
-# TiDB requires SSL; pass it via connect_args for PyMySQL
+# Configure secure SSL context for TiDB Cloud
 connect_args = {}
 if "tidbcloud.com" in DATABASE_URL:
-    connect_args["ssl"] = {}
+    ssl_context = ssl.create_default_context()
+    connect_args["ssl"] = ssl_context
 
 engine = create_engine(
     url, 
