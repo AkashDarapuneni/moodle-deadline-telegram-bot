@@ -9,7 +9,15 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg2://postgres:postgres@localhost:5432/moodle_bot",
 )
 
-engine = create_engine(DATABASE_URL)
+# Render requires SSL for PostgreSQL. If using the external/internal URL, 
+# ensure sslmode is passed safely to psycopg2.
+connect_args = {}
+if "render.com" in DATABASE_URL or "sslmode=" in DATABASE_URL or os.getenv("RENDER"):
+    # If the URL doesn't already contain sslmode, we can append it or pass via connect_args
+    if "sslmode=" not in DATABASE_URL:
+        connect_args = {"sslmode": "require"}
+
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
