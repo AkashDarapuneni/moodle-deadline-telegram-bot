@@ -9,7 +9,6 @@ from telegram import Bot
 from telegram.error import TelegramError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Ensure these match your database.py file exactly
 from database import Deadline, SessionLocal, engine
 
 logging.basicConfig(level=logging.INFO)
