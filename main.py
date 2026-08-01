@@ -1,6 +1,5 @@
-# Version 1.0.6 - Smart Assistant & Robust Sync Edition
+# Version 1.0.7 - Persistent Link & Expiry Detection Edition
 import os
-import re
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from datetime import datetime, timezone
@@ -8,7 +7,6 @@ from datetime import datetime, timezone
 import requests
 from fastapi import FastAPI, Request, Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from google import genai
@@ -31,8 +29,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "Welcome to your AI Moodle Tracker!\n\n"
         "✨ **What I can do:**\n"
-        "1. Sync deadlines: Paste your Moodle link or raw calendar text starting with `BEGIN:VCALENDAR` once.\n"
-        "2. Ask me anything: Talk naturally about your upcoming milestones, due dates, or check for overdue assignments anytime!"
+        "1. Sync deadlines: Paste your Moodle link or raw calendar text *once*. I will save it permanently.\n"
+        "2. Ask me anything: Talk naturally about your due assignments, specific dates, or overdue tasks anytime!"
     )
 
 
@@ -44,7 +42,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_chat.id
     db = SessionLocal()
 
-    # SCENARIO A: User is updating/pasting a calendar file data dump or link
+    # SCENARIO A: User is providing or updating their calendar link/text
     if "BEGIN:VCALENDAR" in text_payload or text_payload.startswith(("http://", "https://")):
         await update.message.reply_text("🔄 Syncing your calendar milestones...")
         try:
@@ -52,33 +50,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
             if not user:
-                user = User(telegram_chat_id=chat_id)
+                user = User(telegram_chat_id=chat_id, moodle_url="")
                 db.add(user)
             
             if is_url:
-                user.calendar_link = text_payload  
+                user.calendar_link = text_payload  # Persist the link permanently
                 
             count = sync_moodle_calendar(db, chat_id, text_payload)
-            user.last_sync_success = True
             db.commit()
 
             if count == 0:
                 await update.message.reply_text("📭 No assignments found in this calendar link or file. Please check your Moodle calendar settings.")
             else:
-                await update.message.reply_text(f"✅ Sync complete! Tracked {count} upcoming milestones successfully.")
+                await update.message.reply_text(f"✅ Sync complete! Tracked {count} upcoming milestones successfully. I have saved your link securely.")
                 
         except ValueError:
             db.rollback()
             await update.message.reply_text("❌ The provided link or calendar text is not valid. Please check and try again.")
         except requests.RequestException:
             db.rollback()
-            await update.message.reply_text(
-                "❌ Network connection failed or link has expired!\n"
-                "Please verify your Moodle authentication token or copy-paste the raw text content inside your downloaded (.ics) file directly here."
-            )
+            await update.message.reply_text("❌ Link was expired. Please generate a new Moodle calendar export URL and send it here.")
         except Exception:
             db.rollback()
-            await update.message.reply_text("❌ The provided link or calendar text is not valid. Please check and try again.")
+            await update.message.reply_text("❌ Link was expired or invalid. Please provide an active calendar link.")
         finally:
             db.close()
         return
@@ -94,9 +88,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         current_ai_client = genai.Client(api_key=local_api_key)
         
         user_record = db.query(User).filter(User.telegram_chat_id == chat_id).first()
-        has_synced_before = user_record is not None
         
-        # Fetch ALL stored deadlines (including past ones for overdue query support)
+        # If user has a saved link, perform a live check in the background to ensure it hasn't expired
+        if user_record and user_record.calendar_link:
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "text/calendar,text/html,*/*"
+                }
+                res = requests.get(user_record.calendar_link, headers=headers, timeout=10)
+                if res.status_code >= 400 or "BEGIN:VCALENDAR" not in res.text:
+                    await update.message.reply_text("❌ Link was expired. Please send your updated Moodle calendar link.")
+                    db.close()
+                    return
+            except Exception:
+                await update.message.reply_text("❌ Link was expired. Please send your updated Moodle calendar link.")
+                db.close()
+                return
+
+        has_synced_before = user_record is not None and user_record.calendar_link is not None
+        
         stmt = select(Deadline).where(Deadline.telegram_chat_id == chat_id).order_by(Deadline.due_date)
         deadlines = db.scalars(stmt).all()
         
@@ -115,10 +126,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"All Tracked Deadlines (Upcoming & Overdue):\n{deadline_context}\n\n"
             "Guidelines:\n"
             "- If the user says 'hi' or greets you, reply warmly: 'Hello! How may I help you? You can ask me about your due assignments with their times, check specific dates, or ask for overdue assignments.'\n"
-            "- If 'User Profile Synced Status' is NO, gently instruct them to paste their calendar link or text to get started.\n"
-            "- If they ask for due assignments, list them clearly with their names and absolute times.\n"
-            "- If they ask for assignments on a specific date, filter and display only the assignments due on that exact calendar date.\n"
-            "- If they ask for overdue assignments, list the tasks that have passed their deadline along with how long ago they became overdue.\n"
+            "- CRITICAL: Since the user's link is permanently stored, NEVER ask them to paste their link or calendar again if 'User Profile Synced Status' is YES.\n"
+            "- If they ask for due assignments, list them clearly with names and absolute times.\n"
+            "- If they ask for assignments on a specific date, filter and display only assignments due on that exact date.\n"
+            "- If they ask for overdue assignments, list past-due tasks and how long ago they became overdue.\n"
             "- Keep responses concise, direct, and well-formatted using Markdown."
         )
 
