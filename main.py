@@ -1,4 +1,4 @@
-# Version 1.0.7 - Persistent Link & Expiry Detection Edition
+# Version 1.0.8 - Debug Error Exposure Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -133,18 +133,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "- Keep responses concise, direct, and well-formatted using Markdown."
         )
 
-        # Updated safe call format for google-genai SDK
         response = current_ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-2.0-flash',
             contents=f"{system_prompt}\n\nUser Message: {text_payload}"
         )
         
         await update.message.reply_text(response.text, parse_mode="Markdown")
 
     except Exception as e:
-        # This will now print the actual error to your Render logs so you can see it if it happens again
         print(f"Gemini API Error: {e}")
-        await update.message.reply_text("I couldn't process that query right now. Please try again in a moment.")
+        # Exposing the exact error string in Telegram for rapid debugging
+        await update.message.reply_text(f"⚠️ Error: {e}")
     finally:
         db.close()
 
