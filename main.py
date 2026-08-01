@@ -1,4 +1,4 @@
-# Version 1.0.9 - Database Migration Patch Edition
+# Version 1.1.0 - Live Calendar Auto-Sync Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -89,7 +89,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         user_record = db.query(User).filter(User.telegram_chat_id == chat_id).first()
         
-        # If user has a saved link, perform a live check in the background to ensure it hasn't expired
+        # If user has a saved link, perform a live check AND re-sync assignments to DB
         if user_record and user_record.calendar_link:
             try:
                 headers = {
@@ -101,10 +101,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await update.message.reply_text("❌ Link was expired. Please send your updated Moodle calendar link.")
                     db.close()
                     return
-            except Exception:
-                await update.message.reply_text("❌ Link was expired. Please send your updated Moodle calendar link.")
-                db.close()
-                return
+                
+                # AUTO-SYNC LIVE CONTENT TO DATABASE
+                sync_moodle_calendar(db, chat_id, res.text)
+                db.commit()
+
+            except Exception as live_err:
+                print(f"Live Sync Warning: {live_err}")
 
         has_synced_before = user_record is not None and user_record.calendar_link is not None
         
@@ -125,11 +128,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"User Profile Synced Status: {'YES' if has_synced_before else 'NO'}\n"
             f"All Tracked Deadlines (Upcoming & Overdue):\n{deadline_context}\n\n"
             "Guidelines:\n"
-            "- If the user says 'hi' or greets you, reply warmly: 'Hello! How may I help you? You can ask me about your due assignments with their times, check specific dates, or ask for overdue assignments.'\n"
+            "- If the user says 'hi' or greets you, reply warmly.\n"
             "- CRITICAL: Since the user's link is permanently stored, NEVER ask them to paste their link or calendar again if 'User Profile Synced Status' is YES.\n"
+            "- Compare the current timestamp with task deadlines to answer time-relative questions accurately (e.g. 'after 5 days', 'this week', 'overdue').\n"
             "- If they ask for due assignments, list them clearly with names and absolute times.\n"
-            "- If they ask for assignments on a specific date, filter and display only assignments due on that exact date.\n"
-            "- If they ask for overdue assignments, list past-due tasks and how long ago they became overdue.\n"
             "- Keep responses concise, direct, and well-formatted using Markdown."
         )
 
