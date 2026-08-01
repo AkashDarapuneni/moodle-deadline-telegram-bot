@@ -39,7 +39,8 @@ class User(Base):
     __tablename__ = "users"
 
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    moodle_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    moodle_url: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    calendar_link: Mapped[str] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
