@@ -1,4 +1,4 @@
-# Version 1.0.8 - Debug Error Exposure Edition
+# Version 1.0.9 - Database Migration Patch Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import requests
 from fastapi import FastAPI, Request, Response
-from sqlalchemy import select
+from sqlalchemy import select, text
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from google import genai
@@ -70,9 +70,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except requests.RequestException:
             db.rollback()
             await update.message.reply_text("❌ Link was expired. Please generate a new Moodle calendar export URL and send it here.")
-        except Exception:
+        except Exception as e:
             db.rollback()
-            await update.message.reply_text("❌ Link was expired or invalid. Please provide an active calendar link.")
+            await update.message.reply_text(f"❌ Error during sync: {e}")
         finally:
             db.close()
         return
@@ -142,7 +142,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except Exception as e:
         print(f"Gemini API Error: {e}")
-        # Exposing the exact error string in Telegram for rapid debugging
         await update.message.reply_text(f"⚠️ Error: {e}")
     finally:
         db.close()
@@ -155,6 +154,15 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    
+    # Auto-patch missing database columns
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN calendar_link VARCHAR(512);"))
+            conn.commit()
+        except Exception:
+            pass  # Ignored if the column already exists
+            
     if WEBHOOK_URL:
         target_url = WEBHOOK_URL if WEBHOOK_URL.endswith("/webhook") else f"{WEBHOOK_URL.rstrip('/')}/webhook"
         await application.bot.set_webhook(url=target_url)
