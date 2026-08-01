@@ -86,7 +86,6 @@ def check_and_send_alerts() -> None:
         db.close()
 
 
-# ADDED: Retry logic for database cold starts
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=2, min=4, max=30)
@@ -101,12 +100,10 @@ def wait_for_db():
 if __name__ == "__main__":
     logger.info("Starting alert worker - waiting for database initialization...")
     
-    # Replaced time.sleep(10) with smart retry
     wait_for_db() 
     
     scheduler = BlockingScheduler()
     scheduler.add_job(check_and_send_alerts, "interval", minutes=5)
     
-    # Run an immediate check once the DB is verified alive
     check_and_send_alerts()
     scheduler.start()
