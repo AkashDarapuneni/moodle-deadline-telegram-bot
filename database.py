@@ -61,3 +61,7 @@ class Deadline(Base):
     sent_24h_alert: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sent_6h_alert: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sent_1h_alert: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    import models
+
+# Automatically create database tables on startup if they don't exist
+Base.metadata.create_all(bind=engine)
