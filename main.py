@@ -119,7 +119,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         deadline_context = "\n".join(context_lines) if context_lines else "No deadlines recorded."
 
-        system_instruction = (
+        system_prompt = (
             "You are an empathetic, sharp academic assistant for university students.\n\n"
             f"Current Timestamp context: {current_time_str}\n"
             f"User Profile Synced Status: {'YES' if has_synced_before else 'NO'}\n"
@@ -133,15 +133,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "- Keep responses concise, direct, and well-formatted using Markdown."
         )
 
+        # Updated safe call format for google-genai SDK
         response = current_ai_client.models.generate_content(
             model='gemini-1.5-flash',
-            contents=text_payload,
-            config={'system_instruction': system_instruction}
+            contents=f"{system_prompt}\n\nUser Message: {text_payload}"
         )
         
         await update.message.reply_text(response.text, parse_mode="Markdown")
 
-    except Exception:
+    except Exception as e:
+        # This will now print the actual error to your Render logs so you can see it if it happens again
+        print(f"Gemini API Error: {e}")
         await update.message.reply_text("I couldn't process that query right now. Please try again in a moment.")
     finally:
         db.close()
