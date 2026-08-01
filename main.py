@@ -135,7 +135,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Updated safe call format for google-genai SDK
         response = current_ai_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=f"{system_prompt}\n\nUser Message: {text_payload}"
         )
         
