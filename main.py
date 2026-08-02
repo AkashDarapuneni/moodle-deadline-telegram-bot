@@ -1,8 +1,8 @@
-# Version 1.1.1 - Foreign Key & Auto-User Provisioning Fix
+# Version 1.2.0 - Multi-Interval Auto-Reminders Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import requests
 from fastapi import FastAPI, Request, Response
@@ -60,7 +60,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 if is_url:
                     user.calendar_link = text_payload
             
-            # FIX: Commit the parent user row FIRST to satisfy MySQL Foreign Key constraints
+            # Commit parent row first to satisfy Foreign Key constraints
             db.commit()
 
             count = sync_moodle_calendar(db, chat_id, text_payload)
@@ -95,7 +95,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         user_record = db.query(User).filter(User.telegram_chat_id == chat_id).first()
         
-        # If user has a saved link, perform a live check AND re-sync assignments to DB
+        # Live background sync check
         if user_record and user_record.calendar_link:
             try:
                 headers = {
@@ -129,7 +129,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "Guidelines:\n"
             "- If the user says 'hi' or greets you, reply warmly.\n"
             "- CRITICAL: Since the user's link is permanently stored, NEVER ask them to paste their link or calendar again if 'User Profile Synced Status' is YES.\n"
-            "- Compare the current timestamp with task deadlines to answer time-relative questions accurately (e.g. 'after 5 days', 'this week', 'overdue').\n"
+            "- Compare the current timestamp with task deadlines to answer time-relative questions accurately.\n"
             "- If they ask for due assignments, list them clearly with names and absolute times.\n"
             "- Keep responses concise, direct, and well-formatted using Markdown."
         )
@@ -156,13 +156,19 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     
-    # Auto-patch missing database columns
+    # Auto-patch missing columns across database tables
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN calendar_link VARCHAR(512);"))
-            conn.commit()
-        except Exception:
-            pass  # Ignored if the column already exists
+        columns_to_patch = [
+            ("users", "calendar_link", "VARCHAR(512)"),
+            ("deadlines", "sent_2h_alert", "BOOLEAN DEFAULT FALSE"),
+            ("deadlines", "sent_50m_alert", "BOOLEAN DEFAULT FALSE"),
+        ]
+        for table, col, col_type in columns_to_patch:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type};"))
+                conn.commit()
+            except Exception:
+                pass  # Ignore if column already exists
             
     if WEBHOOK_URL:
         target_url = WEBHOOK_URL if WEBHOOK_URL.endswith("/webhook") else f"{WEBHOOK_URL.rstrip('/')}/webhook"
@@ -174,6 +180,61 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/check-reminders")
+async def check_reminders():
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        stmt = select(Deadline)
+        deadlines = db.scalars(stmt).all()
+        
+        for d in deadlines:
+            due = d.due_date
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=timezone.utc)
+                
+            time_left = due - now
+            chat_id = d.telegram_chat_id
+
+            # 1. 24-HOUR ALERT
+            if timedelta(hours=23, minutes=45) <= time_left <= timedelta(hours=24, minutes=15) and not getattr(d, 'sent_24h_alert', False):
+                msg = f"⏰ **24-Hour Reminder!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                d.sent_24h_alert = True
+
+            # 2. 6-HOUR ALERT
+            elif timedelta(hours=5, minutes=45) <= time_left <= timedelta(hours=6, minutes=15) and not getattr(d, 'sent_6h_alert', False):
+                msg = f"⚠️ **6-Hour Warning!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                d.sent_6h_alert = True
+
+            # 3. 2-HOUR ALERT
+            elif timedelta(hours=1, minutes=45) <= time_left <= timedelta(hours=2, minutes=15) and not getattr(d, 'sent_2h_alert', False):
+                msg = f"⏳ **2-Hour Alert!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                d.sent_2h_alert = True
+
+            # 4. 1-HOUR ALERT
+            elif timedelta(minutes=55) <= time_left <= timedelta(hours=1, minutes=5) and not getattr(d, 'sent_1h_alert', False):
+                msg = f"🚨 **1-Hour Urgent Alert!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                d.sent_1h_alert = True
+
+            # 5. 50-MINUTE ALERT
+            elif timedelta(minutes=45) <= time_left <= timedelta(minutes=52) and not getattr(d, 'sent_50m_alert', False):
+                msg = f"🔥 **50 Minutes Remaining!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                d.sent_50m_alert = True
+
+        db.commit()
+        return {"status": "success", "checked_at": now.isoformat()}
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "detail": str(e)}
+    finally:
+        db.close()
 
 
 @app.post("/webhook")
