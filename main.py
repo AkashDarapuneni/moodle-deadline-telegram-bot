@@ -1,4 +1,4 @@
-# Version 1.1.0 - Live Calendar Auto-Sync Edition
+# Version 1.1.1 - Foreign Key & Auto-User Provisioning Fix
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -50,26 +50,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
             if not user:
-                user = User(telegram_chat_id=chat_id, moodle_url="")
+                user = User(
+                    telegram_chat_id=chat_id, 
+                    moodle_url="", 
+                    calendar_link=text_payload if is_url else None
+                )
                 db.add(user)
+            else:
+                if is_url:
+                    user.calendar_link = text_payload
             
-            if is_url:
-                user.calendar_link = text_payload  # Persist the link permanently
-                
-            count = sync_moodle_calendar(db, chat_id, text_payload)
+            # FIX: Commit the parent user row FIRST to satisfy MySQL Foreign Key constraints
             db.commit()
+
+            count = sync_moodle_calendar(db, chat_id, text_payload)
 
             if count == 0:
                 await update.message.reply_text("📭 No assignments found in this calendar link or file. Please check your Moodle calendar settings.")
             else:
-                await update.message.reply_text(f"✅ Sync complete! Tracked {count} upcoming milestones successfully. I have saved your link securely.")
+                await update.message.reply_text(f"✅ Sync complete! Tracked {count} upcoming milestones successfully. Saved securely!")
                 
-        except ValueError:
+        except ValueError as val_err:
             db.rollback()
-            await update.message.reply_text("❌ The provided link or calendar text is not valid. Please check and try again.")
+            await update.message.reply_text(f"❌ Sync Failed: {val_err}")
         except requests.RequestException:
             db.rollback()
-            await update.message.reply_text("❌ Link was expired. Please generate a new Moodle calendar export URL and send it here.")
+            await update.message.reply_text("❌ Link was expired or unreachable. Please generate a new Moodle calendar export URL.")
         except Exception as e:
             db.rollback()
             await update.message.reply_text(f"❌ Error during sync: {e}")
@@ -97,15 +103,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "Accept": "text/calendar,text/html,*/*"
                 }
                 res = requests.get(user_record.calendar_link, headers=headers, timeout=10)
-                if res.status_code >= 400 or "BEGIN:VCALENDAR" not in res.text:
-                    await update.message.reply_text("❌ Link was expired. Please send your updated Moodle calendar link.")
-                    db.close()
-                    return
-                
-                # AUTO-SYNC LIVE CONTENT TO DATABASE
-                sync_moodle_calendar(db, chat_id, res.text)
-                db.commit()
-
+                if res.status_code < 400 and "BEGIN:VCALENDAR" in res.text:
+                    sync_moodle_calendar(db, chat_id, res.text)
             except Exception as live_err:
                 print(f"Live Sync Warning: {live_err}")
 
