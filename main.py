@@ -1,4 +1,4 @@
-# Version 1.5.0 - Adaptive Onboarding & Context Edition
+# Version 1.6.0 - Smart Link Helper & Adaptive AI Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -31,9 +31,13 @@ application = (
 UNSYNCED_MESSAGE = (
     "⚠️ **Please provide your Moodle calendar link or calendar text!**\n\n"
     "To start tracking your assignments and receiving automated reminders, I need your Moodle export URL.\n\n"
-    "🔗 **LMS Portal:** [lms.kluniversity.in](https://lms.kluniversity.in)\n"
-    "🎥 **Video Tutorial:** [Watch How to Get Your Link](https://youtu.be/_mbkqrZ6ZHQ)\n\n"
-    "👇 *Paste your generated URL directly into this chat once copied!*"
+    "📌 **How to get your link:**\n"
+    "1️⃣ Log in at [lms.kluniversity.in](https://lms.kluniversity.in)\n"
+    "2️⃣ Click **Calendar** on the left menu\n"
+    "3️⃣ Scroll down and click **Export calendar**\n"
+    "4️⃣ Select **All events** & **Recent and next 60 days**, then click **Get calendar URL**\n"
+    "5️⃣ Copy and paste the link directly into this chat!\n\n"
+    "🎥 **Video Tutorial:** [Watch Step-by-Step Video](https://youtu.be/_mbkqrZ6ZHQ)"
 )
 
 # Shared helper message for synced users
@@ -166,13 +170,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         deadline_context = "\n".join(context_lines) if context_lines else "No deadlines recorded."
 
+        # UPDATED SYSTEM PROMPT WITH EXACT INSTRUCTIONS
         system_prompt = (
-            "You are an empathetic, sharp academic assistant for university students.\n\n"
+            "You are an empathetic, sharp academic assistant for university students at KL University.\n\n"
             f"Current Timestamp context: {current_time_str}\n"
             f"All Tracked Deadlines (Upcoming & Overdue):\n{deadline_context}\n\n"
             "Guidelines:\n"
-            "- If the user says 'hi' or greets you, reply warmly and offer to help with their schedule.\n"
-            "- If they ask 'how to use' or 'what can you do', explain your features clearly.\n"
+            "- If the user says 'hi' or greets you, reply warmly.\n"
+            "- IF THE USER ASKS HOW TO GET, EXPORT, OR UPDATE THEIR MOODLE/LMS LINK, give them these exact steps:\n"
+            "  1. Log in to lms.kluniversity.in\n"
+            "  2. Click 'Calendar' on the left menu.\n"
+            "  3. Scroll down and click 'Export calendar'.\n"
+            "  4. Select 'All events' and 'Recent and next 60 days', then click 'Get calendar URL'.\n"
+            "  5. Copy and paste the link directly into this chat.\n"
+            "  Provide the YouTube tutorial video link too: https://youtu.be/_mbkqrZ6ZHQ\n"
             "- Compare the current IST timestamp with task deadlines to answer time-relative questions accurately.\n"
             "- List due assignments clearly with names and absolute times in Indian Standard Time (IST).\n"
             "- Keep responses concise, direct, and well-formatted using Markdown."
