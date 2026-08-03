@@ -1,4 +1,4 @@
-# Version 1.2.0 - Multi-Interval Auto-Reminders Edition
+# Version 1.3.0 - IST Timezone & Multi-Interval Auto-Reminders Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -13,6 +13,9 @@ from google import genai
 
 from database import SessionLocal, User, engine, Base, Deadline
 from parser import sync_moodle_calendar
+
+# Define Indian Standard Time (IST = UTC + 5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -113,11 +116,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         stmt = select(Deadline).where(Deadline.telegram_chat_id == chat_id).order_by(Deadline.due_date)
         deadlines = db.scalars(stmt).all()
         
-        current_time_str = datetime.now(timezone.utc).strftime("%A, %B %d, %Y at %I:%M %p UTC")
+        # Convert current timestamp to IST for Gemini prompt
+        now_ist = datetime.now(timezone.utc).astimezone(IST)
+        current_time_str = now_ist.strftime("%A, %B %d, %Y at %I:%M %p IST")
         
         context_lines = []
         for d in deadlines:
-            context_lines.append(f"- Subject/Task: {d.assignment_title} | Absolute Deadline: {d.due_date.strftime('%Y-%m-%d %H:%M UTC')}")
+            due_utc = d.due_date
+            if due_utc.tzinfo is None:
+                due_utc = due_utc.replace(tzinfo=timezone.utc)
+            due_ist = due_utc.astimezone(IST)
+            context_lines.append(
+                f"- Subject/Task: {d.assignment_title} | Absolute Deadline: {due_ist.strftime('%d %b %Y, %I:%M %p IST')}"
+            )
         
         deadline_context = "\n".join(context_lines) if context_lines else "No deadlines recorded."
 
@@ -129,8 +140,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "Guidelines:\n"
             "- If the user says 'hi' or greets you, reply warmly.\n"
             "- CRITICAL: Since the user's link is permanently stored, NEVER ask them to paste their link or calendar again if 'User Profile Synced Status' is YES.\n"
-            "- Compare the current timestamp with task deadlines to answer time-relative questions accurately.\n"
-            "- If they ask for due assignments, list them clearly with names and absolute times.\n"
+            "- Compare the current IST timestamp with task deadlines to answer time-relative questions accurately.\n"
+            "- If they ask for due assignments, list them clearly with names and absolute times in Indian Standard Time (IST).\n"
             "- Keep responses concise, direct, and well-formatted using Markdown."
         )
 
@@ -198,38 +209,42 @@ async def check_reminders():
             time_left = due - now
             chat_id = d.telegram_chat_id
 
+            # Format due date in IST for user notifications
+            due_ist = due.astimezone(IST)
+            due_formatted = due_ist.strftime('%d %b %Y, %I:%M %p IST')
+
             # 1. 24-HOUR ALERT
             if timedelta(hours=23, minutes=45) <= time_left <= timedelta(hours=24, minutes=15) and not getattr(d, 'sent_24h_alert', False):
-                msg = f"⏰ **24-Hour Reminder!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                msg = f"⏰ **24-Hour Reminder!**\n\nTask: **{d.assignment_title}**\nDue: {due_formatted}"
                 await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
                 d.sent_24h_alert = True
 
             # 2. 6-HOUR ALERT
             elif timedelta(hours=5, minutes=45) <= time_left <= timedelta(hours=6, minutes=15) and not getattr(d, 'sent_6h_alert', False):
-                msg = f"⚠️ **6-Hour Warning!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                msg = f"⚠️ **6-Hour Warning!**\n\nTask: **{d.assignment_title}**\nDue: {due_formatted}"
                 await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
                 d.sent_6h_alert = True
 
             # 3. 2-HOUR ALERT
             elif timedelta(hours=1, minutes=45) <= time_left <= timedelta(hours=2, minutes=15) and not getattr(d, 'sent_2h_alert', False):
-                msg = f"⏳ **2-Hour Alert!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                msg = f"⏳ **2-Hour Alert!**\n\nTask: **{d.assignment_title}**\nDue: {due_formatted}"
                 await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
                 d.sent_2h_alert = True
 
             # 4. 1-HOUR ALERT
             elif timedelta(minutes=55) <= time_left <= timedelta(hours=1, minutes=5) and not getattr(d, 'sent_1h_alert', False):
-                msg = f"🚨 **1-Hour Urgent Alert!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                msg = f"🚨 **1-Hour Urgent Alert!**\n\nTask: **{d.assignment_title}**\nDue: {due_formatted}"
                 await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
                 d.sent_1h_alert = True
 
             # 5. 50-MINUTE ALERT
             elif timedelta(minutes=45) <= time_left <= timedelta(minutes=52) and not getattr(d, 'sent_50m_alert', False):
-                msg = f"🔥 **50 Minutes Remaining!**\n\nTask: **{d.assignment_title}**\nDue: {due.strftime('%Y-%m-%d %H:%M UTC')}"
+                msg = f"🔥 **50 Minutes Remaining!**\n\nTask: **{d.assignment_title}**\nDue: {due_formatted}"
                 await application.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
                 d.sent_50m_alert = True
 
         db.commit()
-        return {"status": "success", "checked_at": now.isoformat()}
+        return {"status": "success", "checked_at": now.astimezone(IST).isoformat()}
     except Exception as e:
         db.rollback()
         return {"status": "error", "detail": str(e)}
