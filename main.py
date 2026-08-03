@@ -1,4 +1,4 @@
-# Version 1.4.0 - Step-by-Step Onboarding Edition
+# Version 1.5.0 - Adaptive Onboarding & Context Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -27,32 +27,42 @@ application = (
     .build()
 )
 
+# Shared helper message for unsynced users
+UNSYNCED_MESSAGE = (
+    "⚠️ **Please provide your Moodle calendar link or calendar text!**\n\n"
+    "To start tracking your assignments and receiving automated reminders, I need your Moodle export URL.\n\n"
+    "🔗 **LMS Portal:** [lms.kluniversity.in](https://lms.kluniversity.in)\n"
+    "🎥 **Video Tutorial:** [Watch How to Get Your Link](https://youtu.be/_mbkqrZ6ZHQ)\n\n"
+    "👇 *Paste your generated URL directly into this chat once copied!*"
+)
+
+# Shared helper message for synced users
+SYNCED_INFO_MESSAGE = (
+    "✅ **Your Moodle Calendar is Synced & Active!**\n\n"
+    "🤖 **What I do for you:**\n"
+    "• **Automatic Reminders:** I will automatically send you Telegram alerts **24h, 6h, 2h, 1h, and 50m** before any task is due.\n"
+    "• **Live Updates:** I continuously sync with your Moodle calendar to catch newly posted assignments.\n"
+    "• **AI Assistant:** You can ask me anything about your academic schedule in plain English.\n\n"
+    "💬 **How to chat with me:**\n"
+    "Simply type a message in this chat! Here are a few examples of what you can ask:\n"
+    "👉 *\"What assignments are due this week?\"*\n"
+    "👉 *\"Do I have anything due tomorrow?\"*\n"
+    "👉 *\"List all my pending quizzes.\"*\n"
+    "👉 *\"When is my next project deadline?\"*"
+)
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    welcome_text = (
-        "👋 **Welcome to your AI Moodle Calendar & Deadline Tracker!**\n\n"
-        "I will track your KL University assignments, quizzes, and project deadlines, "
-        "and automatically send you reminders before they are due!\n\n"
-        "───────────────\n"
-        "📌 **Step-by-Step: How to get your Moodle Link**\n\n"
-        "1️⃣ **Log in to LMS:**\n"
-        "   Open [lms.kluniversity.in](https://lms.kluniversity.in) in your browser.\n\n"
-        "2️⃣ **Go to Calendar:**\n"
-        "   Click on **Calendar** from the left navigation sidebar or your dashboard.\n\n"
-        "3️⃣ **Click Export Calendar:**\n"
-        "   Scroll down to the bottom of the calendar page and click **Export calendar**.\n\n"
-        "4️⃣ **Select Options:**\n"
-        "   • Events to export: Select **All events**\n"
-        "   • Time period: Select **Recent and next 60 days**\n"
-        "   • Click the button: **Get calendar URL**\n\n"
-        "5️⃣ **Paste the Link:**\n"
-        "   Copy the long generated URL and **paste it directly into this chat**!\n\n"
-        "🎥 **Need visual guidance? Watch this tutorial video:**\n"
-        "https://youtu.be/_mbkqrZ6ZHQ\n\n"
-        "───────────────\n"
-        "✨ *Once you paste your link, I will save it permanently and keep you updated automatically!*"
-    )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown", disable_web_page_preview=False)
+    chat_id = update.effective_chat.id
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+        if user and user.calendar_link:
+            await update.message.reply_text(SYNCED_INFO_MESSAGE, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(UNSYNCED_MESSAGE, parse_mode="Markdown", disable_web_page_preview=False)
+    finally:
+        db.close()
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -81,15 +91,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 if is_url:
                     user.calendar_link = text_payload
             
-            # Commit parent row first to satisfy Foreign Key constraints
             db.commit()
-
             count = sync_moodle_calendar(db, chat_id, text_payload)
 
             if count == 0:
-                await update.message.reply_text("📭 No assignments found in this calendar link or file. Please check your Moodle calendar settings.")
+                await update.message.reply_text("📭 No assignments found in this calendar link. Please verify your Moodle export options.")
             else:
-                await update.message.reply_text(f"✅ Sync complete! Tracked {count} upcoming milestones successfully. Saved securely!")
+                await update.message.reply_text(
+                    f"✅ Sync complete! Tracked **{count}** upcoming milestones successfully.\n\n" + SYNCED_INFO_MESSAGE,
+                    parse_mode="Markdown"
+                )
                 
         except ValueError as val_err:
             db.rollback()
@@ -104,7 +115,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             db.close()
         return
 
-    # SCENARIO B: Conversational Assistant Query
+    # Check if user has synced before processing conversational messages
+    user_record = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+    has_synced_before = user_record is not None and bool(user_record.calendar_link)
+
+    # SCENARIO B: Unsynced user trying to chat
+    if not has_synced_before:
+        await update.message.reply_text(UNSYNCED_MESSAGE, parse_mode="Markdown", disable_web_page_preview=False)
+        db.close()
+        return
+
+    # SCENARIO C: Synced Conversational Assistant Query
     local_api_key = os.getenv("GEMINI_API_KEY")
     if not local_api_key:
         await update.message.reply_text("AI features are currently unavailable. Ensure GEMINI_API_KEY is configured on Render.")
@@ -113,8 +134,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         current_ai_client = genai.Client(api_key=local_api_key)
-        
-        user_record = db.query(User).filter(User.telegram_chat_id == chat_id).first()
         
         # Live background sync check
         if user_record and user_record.calendar_link:
@@ -129,12 +148,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             except Exception as live_err:
                 print(f"Live Sync Warning: {live_err}")
 
-        has_synced_before = user_record is not None and user_record.calendar_link is not None
-        
         stmt = select(Deadline).where(Deadline.telegram_chat_id == chat_id).order_by(Deadline.due_date)
         deadlines = db.scalars(stmt).all()
         
-        # Convert current timestamp to IST for Gemini prompt
         now_ist = datetime.now(timezone.utc).astimezone(IST)
         current_time_str = now_ist.strftime("%A, %B %d, %Y at %I:%M %p IST")
         
@@ -153,13 +169,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         system_prompt = (
             "You are an empathetic, sharp academic assistant for university students.\n\n"
             f"Current Timestamp context: {current_time_str}\n"
-            f"User Profile Synced Status: {'YES' if has_synced_before else 'NO'}\n"
             f"All Tracked Deadlines (Upcoming & Overdue):\n{deadline_context}\n\n"
             "Guidelines:\n"
-            "- If the user says 'hi' or greets you, reply warmly.\n"
-            "- CRITICAL: Since the user's link is permanently stored, NEVER ask them to paste their link or calendar again if 'User Profile Synced Status' is YES.\n"
+            "- If the user says 'hi' or greets you, reply warmly and offer to help with their schedule.\n"
+            "- If they ask 'how to use' or 'what can you do', explain your features clearly.\n"
             "- Compare the current IST timestamp with task deadlines to answer time-relative questions accurately.\n"
-            "- If they ask for due assignments, list them clearly with names and absolute times in Indian Standard Time (IST).\n"
+            "- List due assignments clearly with names and absolute times in Indian Standard Time (IST).\n"
             "- Keep responses concise, direct, and well-formatted using Markdown."
         )
 
@@ -185,7 +200,6 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     
-    # Auto-patch missing columns across database tables
     with engine.connect() as conn:
         columns_to_patch = [
             ("users", "calendar_link", "VARCHAR(512)"),
@@ -197,7 +211,7 @@ async def lifespan(_: FastAPI):
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type};"))
                 conn.commit()
             except Exception:
-                pass  # Ignore if column already exists
+                pass
             
     if WEBHOOK_URL:
         target_url = WEBHOOK_URL if WEBHOOK_URL.endswith("/webhook") else f"{WEBHOOK_URL.rstrip('/')}/webhook"
@@ -227,7 +241,6 @@ async def check_reminders():
             time_left = due - now
             chat_id = d.telegram_chat_id
 
-            # Format due date in IST for user notifications
             due_ist = due.astimezone(IST)
             due_formatted = due_ist.strftime('%d %b %Y, %I:%M %p IST')
 
