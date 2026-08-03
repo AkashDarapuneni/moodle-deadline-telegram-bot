@@ -1,4 +1,4 @@
-# Version 1.6.0 - Smart Link Helper & Adaptive AI Edition
+# Version 1.8.0 - Relink/Reset Command & Precision Alerts Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -29,31 +29,40 @@ application = (
 
 # Shared helper message for unsynced users
 UNSYNCED_MESSAGE = (
-    "⚠️ **Please provide your Moodle calendar link or calendar text!**\n\n"
-    "To start tracking your assignments and receiving automated reminders, I need your Moodle export URL.\n\n"
-    "📌 **How to get your link:**\n"
-    "1️⃣ Log in at [lms.kluniversity.in](https://lms.kluniversity.in)\n"
-    "2️⃣ Click **Calendar** on the left menu\n"
-    "3️⃣ Scroll down and click **Export calendar**\n"
-    "4️⃣ Select **All events** & **Recent and next 60 days**, then click **Get calendar URL**\n"
-    "5️⃣ Copy and paste the link directly into this chat!\n\n"
-    "🎥 **Video Tutorial:** [Watch Step-by-Step Video](https://youtu.be/_mbkqrZ6ZHQ)"
+    "⚠️ **Please provide link or cal!**\n\n"
+    "To start tracking your assignments and receiving automated reminders, please export and send your Moodle calendar link or calendar file.\n\n"
+    "🔗 **LMS Portal:** [KL University LMS](https://lms.kluniversity.in/login/index.php)\n"
+    "🎥 **Video Tutorial:** [Watch How to Get Your Link](https://youtu.be/_mbkqrZ6ZHQ)\n\n"
+    "📌 **Quick Steps:**\n"
+    "1. Log in at [lms.kluniversity.in](https://lms.kluniversity.in/login/index.php)\n"
+    "2. Go to **Calendar** ➔ **Export calendar**\n"
+    "3. Select **All events** & **Recent and next 60 days**\n"
+    "4. Click **Get calendar URL** and paste it here!"
 )
 
 # Shared helper message for synced users
 SYNCED_INFO_MESSAGE = (
     "✅ **Your Moodle Calendar is Synced & Active!**\n\n"
-    "🤖 **What I do for you:**\n"
-    "• **Automatic Reminders:** I will automatically send you Telegram alerts **24h, 6h, 2h, 1h, and 50m** before any task is due.\n"
-    "• **Live Updates:** I continuously sync with your Moodle calendar to catch newly posted assignments.\n"
-    "• **AI Assistant:** You can ask me anything about your academic schedule in plain English.\n\n"
-    "💬 **How to chat with me:**\n"
-    "Simply type a message in this chat! Here are a few examples of what you can ask:\n"
-    "👉 *\"What assignments are due this week?\"*\n"
-    "👉 *\"Do I have anything due tomorrow?\"*\n"
-    "👉 *\"List all my pending quizzes.\"*\n"
-    "👉 *\"When is my next project deadline?\"*"
+    "🤖 **What this bot was made for:**\n"
+    "• **Automated Reminders:** Sends Telegram alerts 24h, 6h, 2h, 1h, and 50m before your deadlines.\n"
+    "• **Live Background Sync:** Automatically updates whenever new Moodle tasks are posted.\n"
+    "• **Smart AI Assistant:** Answers questions about your academic schedule in plain English.\n"
+    "• **Easy Reset:** Type `/relink` or `/reset` anytime to update your calendar link.\n\n"
+    "💬 **How to chat with the bot:**\n"
+    "Simply type any question about your schedule! Examples:\n"
+    "👉 *\"What's due tomorrow?\"*\n"
+    "👉 *\"List all my pending assignments this week.\"*\n"
+    "👉 *\"When is my next quiz due?\"*\n"
+    "👉 *\"Do I have any urgent deadlines?\"*"
 )
+
+
+async def send_safe_message(update: Update, text_message: str) -> None:
+    """Helper function to send Markdown messages with automatic fallback to plain text if parsing fails."""
+    try:
+        await update.message.reply_text(text_message, parse_mode="Markdown", disable_web_page_preview=False)
+    except Exception:
+        await update.message.reply_text(text_message, disable_web_page_preview=False)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -62,9 +71,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
         if user and user.calendar_link:
-            await update.message.reply_text(SYNCED_INFO_MESSAGE, parse_mode="Markdown")
+            await send_safe_message(update, SYNCED_INFO_MESSAGE)
         else:
-            await update.message.reply_text(UNSYNCED_MESSAGE, parse_mode="Markdown", disable_web_page_preview=False)
+            await send_safe_message(update, UNSYNCED_MESSAGE)
+    finally:
+        db.close()
+
+
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Resets user's stored link and deadlines, prompting them to re-sync."""
+    chat_id = update.effective_chat.id
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+        if user:
+            user.calendar_link = None
+            db.query(Deadline).filter(Deadline.telegram_chat_id == chat_id).delete()
+            db.commit()
+            await update.message.reply_text(
+                "🔄 **Calendar link reset successfully!**\nYour previous calendar link and cached deadlines have been cleared.\n"
+            )
+            await send_safe_message(update, UNSYNCED_MESSAGE)
+        else:
+            await send_safe_message(update, UNSYNCED_MESSAGE)
+    except Exception as e:
+        db.rollback()
+        await update.message.reply_text(f"❌ Failed to reset link: {e}")
     finally:
         db.close()
 
@@ -101,16 +133,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if count == 0:
                 await update.message.reply_text("📭 No assignments found in this calendar link. Please verify your Moodle export options.")
             else:
-                await update.message.reply_text(
-                    f"✅ Sync complete! Tracked **{count}** upcoming milestones successfully.\n\n" + SYNCED_INFO_MESSAGE,
-                    parse_mode="Markdown"
+                await send_safe_message(
+                    update,
+                    f"✅ Sync complete! Tracked **{count}** upcoming milestones successfully.\n\n" + SYNCED_INFO_MESSAGE
                 )
                 
         except ValueError as val_err:
             db.rollback()
             await update.message.reply_text(f"❌ Sync Failed: {val_err}")
         except requests.RequestException:
-            db.rollback()
             await update.message.reply_text("❌ Link was expired or unreachable. Please generate a new Moodle calendar export URL.")
         except Exception as e:
             db.rollback()
@@ -125,7 +156,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # SCENARIO B: Unsynced user trying to chat
     if not has_synced_before:
-        await update.message.reply_text(UNSYNCED_MESSAGE, parse_mode="Markdown", disable_web_page_preview=False)
+        await send_safe_message(update, UNSYNCED_MESSAGE)
         db.close()
         return
 
@@ -170,7 +201,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         deadline_context = "\n".join(context_lines) if context_lines else "No deadlines recorded."
 
-        # UPDATED SYSTEM PROMPT WITH EXACT INSTRUCTIONS
         system_prompt = (
             "You are an empathetic, sharp academic assistant for university students at KL University.\n\n"
             f"Current Timestamp context: {current_time_str}\n"
@@ -178,15 +208,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "Guidelines:\n"
             "- If the user says 'hi' or greets you, reply warmly.\n"
             "- IF THE USER ASKS HOW TO GET, EXPORT, OR UPDATE THEIR MOODLE/LMS LINK, give them these exact steps:\n"
-            "  1. Log in to lms.kluniversity.in\n"
+            "  1. Log in at [lms.kluniversity.in](https://lms.kluniversity.in/login/index.php)\n"
             "  2. Click 'Calendar' on the left menu.\n"
             "  3. Scroll down and click 'Export calendar'.\n"
             "  4. Select 'All events' and 'Recent and next 60 days', then click 'Get calendar URL'.\n"
             "  5. Copy and paste the link directly into this chat.\n"
-            "  Provide the YouTube tutorial video link too: https://youtu.be/_mbkqrZ6ZHQ\n"
+            "  Provide the tutorial video link in exact markdown format: [Watch Video Tutorial](https://youtu.be/_mbkqrZ6ZHQ)\n"
+            "- Mention that they can run `/relink` or `/reset` anytime if they ever need to clear or change their saved link.\n"
             "- Compare the current IST timestamp with task deadlines to answer time-relative questions accurately.\n"
             "- List due assignments clearly with names and absolute times in Indian Standard Time (IST).\n"
-            "- Keep responses concise, direct, and well-formatted using Markdown."
+            "- Keep responses concise, direct, and formatted with Markdown."
         )
 
         response = current_ai_client.models.generate_content(
@@ -194,7 +225,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             contents=f"{system_prompt}\n\nUser Message: {text_payload}"
         )
         
-        await update.message.reply_text(response.text, parse_mode="Markdown")
+        await send_safe_message(update, response.text)
 
     except Exception as e:
         print(f"Gemini API Error: {e}")
@@ -204,6 +235,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 application.add_handler(CommandHandler("start", start_command))
+application.add_handler(CommandHandler("reset", reset_command))
+application.add_handler(CommandHandler("relink", reset_command))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 
