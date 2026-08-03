@@ -1,4 +1,4 @@
-# Version 1.3.0 - IST Timezone & Multi-Interval Auto-Reminders Edition
+# Version 1.4.0 - Step-by-Step Onboarding Edition
 import os
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -29,12 +29,30 @@ application = (
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Welcome to your AI Moodle Tracker!\n\n"
-        "✨ **What I can do:**\n"
-        "1. Sync deadlines: Paste your Moodle link or raw calendar text *once*. I will save it permanently.\n"
-        "2. Ask me anything: Talk naturally about your due assignments, specific dates, or overdue tasks anytime!"
+    welcome_text = (
+        "👋 **Welcome to your AI Moodle Calendar & Deadline Tracker!**\n\n"
+        "I will track your KL University assignments, quizzes, and project deadlines, "
+        "and automatically send you reminders before they are due!\n\n"
+        "───────────────\n"
+        "📌 **Step-by-Step: How to get your Moodle Link**\n\n"
+        "1️⃣ **Log in to LMS:**\n"
+        "   Open [lms.kluniversity.in](https://lms.kluniversity.in) in your browser.\n\n"
+        "2️⃣ **Go to Calendar:**\n"
+        "   Click on **Calendar** from the left navigation sidebar or your dashboard.\n\n"
+        "3️⃣ **Click Export Calendar:**\n"
+        "   Scroll down to the bottom of the calendar page and click **Export calendar**.\n\n"
+        "4️⃣ **Select Options:**\n"
+        "   • Events to export: Select **All events**\n"
+        "   • Time period: Select **Recent and next 60 days**\n"
+        "   • Click the button: **Get calendar URL**\n\n"
+        "5️⃣ **Paste the Link:**\n"
+        "   Copy the long generated URL and **paste it directly into this chat**!\n\n"
+        "🎥 **Need visual guidance? Watch this tutorial video:**\n"
+        "https://youtu.be/_mbkqrZ6ZHQ\n\n"
+        "───────────────\n"
+        "✨ *Once you paste your link, I will save it permanently and keep you updated automatically!*"
     )
+    await update.message.reply_text(welcome_text, parse_mode="Markdown", disable_web_page_preview=False)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
