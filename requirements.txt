@@ -8,3 +8,4 @@ requests
 icalendar
 google-genai
 tenacity
+google-generativeai
