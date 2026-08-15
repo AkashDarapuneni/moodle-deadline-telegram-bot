@@ -9,62 +9,20 @@ import google.generativeai as genai
 from fastapi import FastAPI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean
-from sqlalchemy.orm import sessionmaker, declarative_base
 
-# ---------------------------------------------------------
-# 1. CONFIGURATION, AI & DATABASE SETUP
-# ---------------------------------------------------------
+from database import SessionLocal, User, Deadline
+
+# Configure API Keys
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./lms_bot.db")
-
-# Gemini Setup
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-ai_model = genai.GenerativeModel('gemini-2.5-flash')
+ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# Added connect_args={"ssl": {}} here!
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"ssl": {}})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    chat_id = Column(String, unique=True, index=True)
-    moodle_url = Column(String)
-    streak_count = Column(Integer, default=0) # Gamification Streak
-    rank = Column(String, default="Rookie 🔰")
-
-class Deadline(Base):
-    __tablename__ = "deadlines"
-    id = Column(Integer, primary_key=True, index=True)
-    chat_id = Column(String, index=True)
-    assignment_id = Column(String, index=True)
-    assignment_title = Column(String)
-    due_date = Column(DateTime)
-    is_completed = Column(Boolean, default=False)
-    
-    # AI Feature Columns
-    difficulty = Column(String, default="⚪ Unknown")
-    ai_tip = Column(String, default="Just get it done!")
-
-    # Alert Flags
-    sent_24h_alert = Column(Boolean, default=False)
-    sent_6h_alert = Column(Boolean, default=False)
-    sent_2h_alert = Column(Boolean, default=False)
-    sent_1h_alert = Column(Boolean, default=False)
-    sent_50m_alert = Column(Boolean, default=False)
-
-Base.metadata.create_all(bind=engine)
 app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
 # ---------------------------------------------------------
-# 2. TOLLYWOOD STEALTH ALERTS DICTIONARY
+# TOLLYWOOD STEALTH ALERTS DICTIONARY
 # ---------------------------------------------------------
 TFI_CRAZY_ALERTS = {
     "24h": [
@@ -89,9 +47,6 @@ TFI_CRAZY_ALERTS = {
     ]
 }
 
-# ---------------------------------------------------------
-# 3. GEMINI AI LOGIC (Predictive Analytics)
-# ---------------------------------------------------------
 async def analyze_task_with_ai(title: str):
     prompt = f"""
     Analyze this college assignment: "{title}".
@@ -108,27 +63,26 @@ async def analyze_task_with_ai(title: str):
         return "⚪ Unknown", "Stay focused and finish it."
 
 # ---------------------------------------------------------
-# 4. BOT COMMANDS (Start, Sync, Upcoming, Profile, Stats)
+# BOT COMMANDS
 # ---------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎉")
+    await update.message.reply_text("🎉") # Paper blast!
     msg = (
         "🎓 **Welcome to the Elite LMS Tracker (AI Edition)** ⚡\n\n"
-        "I am your personal AI engine. I don't just remind you; I analyze task difficulty, track your streaks, and keep you focused.\n\n"
+        "I am your personal AI engine. I analyze task difficulty, track your streaks, and keep you focused.\n\n"
         "🔗 *Send your Moodle iCal URL to activate:* `/sync <URL>`"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
+    chat_id = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text("❌ **Usage:** `/sync <URL>`", parse_mode="Markdown")
-        return
+        return await update.message.reply_text("❌ **Usage:** `/sync <URL>`", parse_mode="Markdown")
 
     db = SessionLocal()
-    user = db.query(User).filter(User.chat_id == chat_id).first()
+    user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
     if not user:
-        user = User(chat_id=chat_id, moodle_url=context.args[0])
+        user = User(telegram_chat_id=chat_id, moodle_url=context.args[0])
         db.add(user)
     else:
         user.moodle_url = context.args[0]
@@ -139,14 +93,13 @@ async def sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ **System Synced! AI Engine is now scanning your deadlines.**", parse_mode="Markdown")
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
+    chat_id = update.effective_chat.id
     db = SessionLocal()
-    user = db.query(User).filter(User.chat_id == chat_id).first()
+    user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
     db.close()
     
     if not user:
-        await update.message.reply_text("You need to `/sync` first!")
-        return
+        return await update.message.reply_text("You need to `/sync` first!")
 
     msg = (
         "🏆 **YOUR ACADEMIC PROFILE**\n"
@@ -158,15 +111,14 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.effective_chat.id)
+    chat_id = update.effective_chat.id
     db = SessionLocal()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    deadlines = db.query(Deadline).filter(Deadline.chat_id == chat_id, Deadline.is_completed == False, Deadline.due_date >= now).order_by(Deadline.due_date.asc()).all()
+    now = datetime.now(timezone.utc)
+    deadlines = db.query(Deadline).filter(Deadline.telegram_chat_id == chat_id, Deadline.is_completed == False, Deadline.due_date >= now).order_by(Deadline.due_date.asc()).all()
     db.close()
     
     if not deadlines:
-        await update.message.reply_text("🎈\n✨ **Clear Skies!** Zero pending deadlines.")
-        return
+        return await update.message.reply_text("🎈\n✨ **Clear Skies!** Zero pending deadlines.")
 
     msg = "📋 **Your AI Battle Plan:**\n\n"
     for d in deadlines:
@@ -181,34 +133,32 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 **SYSTEM ANALYTICS DASHBOARD**\n"
         f"👥 Active Nodes: `{db.query(User).count()}`\n"
         f"🎯 Active Targets: `{db.query(Deadline).filter(Deadline.is_completed == False).count()}`\n"
-        f"⚡ Engine: ONLINE (TiDB + Gemini AI)"
+        f"⚡ Engine: ONLINE (TiDB SSL + Gemini AI)"
     )
     db.close()
     await update.message.reply_text(stats_msg, parse_mode="Markdown")
 
 # ---------------------------------------------------------
-# 5. BUTTON CLICKS (Mark Done & Pomodoro Focus)
+# INTERACTIVE BUTTONS
 # ---------------------------------------------------------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    chat_id = str(query.message.chat_id)
+    chat_id = query.message.chat_id
 
     if data.startswith("done_"):
         deadline_id = int(data.split("_")[1])
         db = SessionLocal()
         deadline = db.query(Deadline).filter(Deadline.id == deadline_id).first()
-        user = db.query(User).filter(User.chat_id == chat_id).first()
+        user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
         
         if deadline and user:
             deadline.is_completed = True
             user.streak_count += 1
-            # Update Gamification Rank
             if user.streak_count >= 10: user.rank = "Academic Legend 👑"
             elif user.streak_count >= 5: user.rank = "Scholar 🎓"
             elif user.streak_count >= 3: user.rank = "Pro Student ⚡"
-            
             db.commit()
             
             await query.edit_message_text(f"🎉 **TASK NEUTRALIZED!**\n🔥 Streak: {user.streak_count}\n🎖️ Rank: {user.rank}", parse_mode="Markdown")
@@ -216,11 +166,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
 
     elif data.startswith("focus_"):
-        await query.edit_message_text("🎯 **Focus Mode Locked In!**\n\nPut your phone away. I will ping you in 25 minutes to take a break. Get to work!", parse_mode="Markdown")
-        # Async delay for 25 minutes without blocking the bot
+        await query.edit_message_text("🎯 **Focus Mode Locked In!**\n\nPut your phone away. I will ping you in 25 minutes. Get to work!", parse_mode="Markdown")
         async def pomodoro_timer():
             await asyncio.sleep(25 * 60)
-            await context.bot.send_message(chat_id=chat_id, text="⏰ **Time's Up!**\nGreat focus session. Take a 5-minute break and check /upcoming if you need to go again!")
+            await context.bot.send_message(chat_id=chat_id, text="⏰ **Time's Up!**\nGreat focus session. Take a 5-minute break!")
         asyncio.create_task(pomodoro_timer())
 
 application.add_handler(CommandHandler("start", start))
@@ -231,14 +180,15 @@ application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CallbackQueryHandler(button_handler))
 
 # ---------------------------------------------------------
-# 6. CRON JOB: SCAN & NOTIFY ENGINE
+# CORE ENGINE: FETCH MOODLE, CALL AI, AND SEND ALERTS
 # ---------------------------------------------------------
 @app.get("/check-reminders")
 async def check_reminders():
     db = SessionLocal()
     users = db.query(User).all()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now_utc = datetime.now(timezone.utc)
 
+    # 1. Fetch & Analyze New Deadlines
     for user in users:
         try:
             res = requests.get(user.moodle_url, timeout=10)
@@ -248,26 +198,37 @@ async def check_reminders():
                 summary = str(event.get('summary'))
                 uid = str(event.get('uid'))
                 dtend = event.get('dtend').dt
-                due_date = dtend.astimezone(timezone.utc).replace(tzinfo=None) if isinstance(dtend, datetime) else datetime.combine(dtend, datetime.min.time())
+                
+                # Ensure timezone aware
+                due_date = dtend if isinstance(dtend, datetime) else datetime.combine(dtend, datetime.min.time())
+                if due_date.tzinfo is None:
+                    due_date = due_date.replace(tzinfo=timezone.utc)
 
-                deadline = db.query(Deadline).filter(Deadline.chat_id == user.chat_id, Deadline.assignment_id == uid).first()
+                deadline = db.query(Deadline).filter(Deadline.telegram_chat_id == user.telegram_chat_id, Deadline.assignment_id == uid).first()
 
-                # IF NEW ASSIGNMENT -> CALL GEMINI AI IN BACKGROUND
+                # IF NEW ASSIGNMENT -> CALL GEMINI AI
                 if not deadline:
                     ai_level, ai_tip = await analyze_task_with_ai(summary)
-                    deadline = Deadline(chat_id=user.chat_id, assignment_id=uid, assignment_title=summary, due_date=due_date, difficulty=ai_level, ai_tip=ai_tip)
+                    deadline = Deadline(
+                        telegram_chat_id=user.telegram_chat_id, 
+                        assignment_id=uid, 
+                        assignment_title=summary, 
+                        due_date=due_date, 
+                        difficulty=ai_level, 
+                        ai_tip=ai_tip
+                    )
                     db.add(deadline)
                     db.commit()
-        except:
-            pass
+        except Exception as e:
+            print(f"Error fetching data for user {user.telegram_chat_id}: {e}")
 
-    pending = db.query(Deadline).filter(Deadline.is_completed == False, Deadline.due_date >= now).all()
+    # 2. Process Alerts for Pending Tasks
+    pending = db.query(Deadline).filter(Deadline.is_completed == False, Deadline.due_date >= now_utc).all()
 
     for d in pending:
-        time_left = d.due_date - now
+        time_left = d.due_date - now_utc
         due_formatted = (d.due_date + timedelta(hours=5, minutes=30)).strftime("%d %b, %I:%M %p")
         
-        # Interactive Buttons
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Mark as Done", callback_data=f"done_{d.id}"), InlineKeyboardButton("🎯 Lock-In (Focus)", callback_data=f"focus_{d.id}")],
             [InlineKeyboardButton("🌐 Open LMS", url="https://lms.kluniversity.in/login/index.php")]
@@ -287,7 +248,6 @@ async def check_reminders():
 
         if alert_key:
             quote = random.choice(TFI_CRAZY_ALERTS[alert_key])
-            # Premium Message Format with AI Data
             msg = (
                 f"{quote}\n\n"
                 f"📌 **Task:** `{d.assignment_title}`\n"
@@ -296,10 +256,23 @@ async def check_reminders():
                 f"🤖 **Tip:** _{d.ai_tip}_"
             )
             try:
-                await application.bot.send_message(chat_id=d.chat_id, text=msg, parse_mode="Markdown", reply_markup=keyboard)
+                await application.bot.send_message(chat_id=d.telegram_chat_id, text=msg, parse_mode="Markdown", reply_markup=keyboard)
                 db.commit()
             except:
                 pass
 
     db.close()
-    return {"status": "success", "processed_at": now.isoformat()}
+    return {"status": "success"}
+
+# Start Telegram Bot Polling when FastAPI starts
+@app.on_event("startup")
+async def startup_event():
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await application.updater.stop()
+    await application.stop()
+    await application.shutdown()
