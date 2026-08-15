@@ -16,10 +16,8 @@ if url.drivername == "mysql":
     url = url.set(drivername="mysql+pymysql")
 
 # Configure secure SSL context for TiDB Cloud
-connect_args = {}
-if "tidbcloud.com" in DATABASE_URL:
-    ssl_context = ssl.create_default_context()
-    connect_args["ssl"] = ssl_context
+# Force secure SSL context for TiDB Cloud
+connect_args = {"ssl": {}}
 
 engine = create_engine(
     url, 
