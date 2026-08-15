@@ -4,7 +4,7 @@ SQLAlchemy==2.0.25
 PyMySQL==1.1.1
 python-telegram-bot==21.0.1
 requests==2.31.0
-icalendar==7.4.2
-google-generativeai==0.4.1
+icalendar==7.2.2
+google-generativeai==0.8.6
 certifi==2024.2.2
 cryptography==42.0.5
