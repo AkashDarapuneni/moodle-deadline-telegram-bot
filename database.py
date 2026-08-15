@@ -37,7 +37,7 @@ class Base(DeclarativeBase):
     pass
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = "lms_users"  # <--- RENAMED TO CREATE FRESH TABLE
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     moodle_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     streak_count: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -49,11 +49,11 @@ class User(Base):
     )
 
 class Deadline(Base):
-    __tablename__ = "deadlines"
+    __tablename__ = "lms_deadlines"  # <--- RENAMED TO CREATE FRESH TABLE
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     telegram_chat_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("users.telegram_chat_id", ondelete="CASCADE"),
+        ForeignKey("lms_users.telegram_chat_id", ondelete="CASCADE"), # <--- UPDATED LINK
         nullable=False,
     )
     assignment_id: Mapped[str] = mapped_column(String(255), nullable=False)
