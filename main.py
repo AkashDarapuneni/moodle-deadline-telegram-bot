@@ -8,7 +8,7 @@ import icalendar
 import google.generativeai as genai
 from fastapi import FastAPI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 from database import SessionLocal, User, Deadline
 
@@ -25,26 +25,11 @@ application = Application.builder().token(TOKEN).build()
 # TOLLYWOOD STEALTH ALERTS DICTIONARY
 # ---------------------------------------------------------
 TFI_CRAZY_ALERTS = {
-    "24h": [
-        "⏳ *\"Samayam ledu mithrama...\"*\n\n24 hours is less than you think. Open your laptop!\nhttps://media.tenor.com/gautamiputra-satakarni.gif",
-        "⏳ *\"LMS ante flower anukunnava? FIRE-U!\"*\n\n24 hours left, thaggedhe le!\nhttps://media.tenor.com/pushpa-allu-arjun.gif"
-    ],
-    "6h": [
-        "🪓 *\"Flute jinka mundu oodu... LMS server mundu kaadu!\"*\n\nStop playing games!\nhttps://media.tenor.com/balayya-legend.gif",
-        "🪓 *\"Little hearts tintava ra thuppasi vedhava? Velli assignment rayi!\"*\nhttps://media.tenor.com/ms-narayana.gif"
-    ],
-    "2h": [
-        "🚨 *\"Don't trouble the deadline! If you trouble the deadline, deadline troubles you!\"*\n\n2 hours left!\nhttps://media.tenor.com/balayya-dont-trouble.gif",
-        "🚨 *\"YamaGola aypotundi ra... LMS lo submit chey 2 hours ey undi!\"*\nhttps://media.tenor.com/ntr-yamadonga.gif"
-    ],
-    "1h": [
-        "💣 *\"Akhandaaaa!!! LMS server eppudaina padipovachu, submit it immediately!\"*\nhttps://media.tenor.com/akhanda-balayya.gif",
-        "💣 *\"Arey, nenu matladedi vinapadatledaa!! Just 60 minutes left.\"*\n\nDrop everything and upload!\nhttps://media.tenor.com/temper-ntr.gif"
-    ],
-    "50m": [
-        "💀 *\"Arey entra idhi... asalu em jarugutondi akkada! 50 mins ki submit nokkara!\"*\nhttps://media.tenor.com/brahmi-king.gif",
-        "💀 *\"Last minute server crash chusava... mind block aypoddi! UPLOAD UPLOAD!\"*\nhttps://media.tenor.com/ntr-shock.gif"
-    ]
+    "24h": ["⏳ *\"Samayam ledu mithrama...\"*\n\n24 hours is less than you think. Open your laptop!\nhttps://media.tenor.com/gautamiputra-satakarni.gif", "⏳ *\"LMS ante flower anukunnava? FIRE-U!\"*\n\n24 hours left, thaggedhe le!\nhttps://media.tenor.com/pushpa-allu-arjun.gif"],
+    "6h": ["🪓 *\"Flute jinka mundu oodu... LMS server mundu kaadu!\"*\n\nStop playing games!\nhttps://media.tenor.com/balayya-legend.gif", "🪓 *\"Little hearts tintava ra thuppasi vedhava? Velli assignment rayi!\"*\nhttps://media.tenor.com/ms-narayana.gif"],
+    "2h": ["🚨 *\"Don't trouble the deadline! If you trouble the deadline, deadline troubles you!\"*\n\n2 hours left!\nhttps://media.tenor.com/balayya-dont-trouble.gif", "🚨 *\"YamaGola aypotundi ra... LMS lo submit chey 2 hours ey undi!\"*\nhttps://media.tenor.com/ntr-yamadonga.gif"],
+    "1h": ["💣 *\"Akhandaaaa!!! LMS server eppudaina padipovachu, submit it immediately!\"*\nhttps://media.tenor.com/akhanda-balayya.gif", "💣 *\"Arey, nenu matladedi vinapadatledaa!! Just 60 minutes left.\"*\n\nDrop everything and upload!\nhttps://media.tenor.com/temper-ntr.gif"],
+    "50m": ["💀 *\"Arey entra idhi... asalu em jarugutondi akkada! 50 mins ki submit nokkara!\"*\nhttps://media.tenor.com/brahmi-king.gif", "💀 *\"Last minute server crash chusava... mind block aypoddi! UPLOAD UPLOAD!\"*\nhttps://media.tenor.com/ntr-shock.gif"]
 }
 
 async def analyze_task_with_ai(title: str):
@@ -63,21 +48,32 @@ async def analyze_task_with_ai(title: str):
         return "⚪ Unknown", "Stay focused and finish it."
 
 # ---------------------------------------------------------
-# BOT COMMANDS
+# BOT COMMANDS (Onboarding, Overdue, Features)
 # ---------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎉") # Paper blast!
     msg = (
         "🎓 **Welcome to the Elite LMS Tracker (AI Edition)** ⚡\n\n"
-        "I am your personal AI engine. I analyze task difficulty, track your streaks, and keep you focused.\n\n"
-        "🔗 *Send your Moodle iCal URL to activate:* `/sync <URL>`"
+        "To let my AI engine track your deadlines, I need your LMS Calendar Link. "
+        "Here is the exact process to get it:\n\n"
+        "1️⃣ Login to `lms.kluniversity.in`\n"
+        "2️⃣ Click on **Calendar** in the side menu.\n"
+        "3️⃣ Scroll down and click on **Export Calendar**.\n"
+        "4️⃣ Select **All events** and **Recent and next 60 days**.\n"
+        "5️⃣ Click **Get calendar URL**.\n\n"
+        "🔗 *Just copy that URL and paste it directly in this chat! I will auto-detect it.*"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    # Premium Inline Buttons for Onboarding
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📺 Watch Tutorial", url="https://www.youtube.com/watch")], 
+        [InlineKeyboardButton("💀 View Overdue Tasks", callback_data="check_overdue")]
+    ])
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=keyboard)
 
 async def sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not context.args:
-        return await update.message.reply_text("❌ **Usage:** `/sync <URL>`", parse_mode="Markdown")
+        return await update.message.reply_text("❌ **Usage:** `/sync <URL>` or simply paste the link.", parse_mode="Markdown")
 
     db = SessionLocal()
     user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
@@ -92,6 +88,33 @@ async def sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎊")
     await update.message.reply_text("✅ **System Synced! AI Engine is now scanning your deadlines.**", parse_mode="Markdown")
 
+# AUTO DETECT LINK (No /sync needed)
+async def auto_sync_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if "export_execute.php" in text or "lms.kluniversity.in" in text:
+        context.args = [text.strip()]
+        await sync(update, context)
+
+async def overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+    db = SessionLocal()
+    now = datetime.now(timezone.utc)
+    deadlines = db.query(Deadline).filter(Deadline.telegram_chat_id == chat_id, Deadline.is_completed == False, Deadline.due_date < now).order_by(Deadline.due_date.desc()).all()
+    db.close()
+    
+    if not deadlines:
+        msg = "✨ **No Overdue Tasks!** You are perfectly caught up!"
+    else:
+        msg = "💀 **YOUR OVERDUE TASKS (GPA DANGER ZONE):**\n\n"
+        for d in deadlines:
+            msg += f"❌ `{d.assignment_title}`\n⏳ *Missed on:* {d.due_date.strftime('%d %b, %I:%M %p')}\n\n"
+        msg += "_Try submitting late or request your professor!_"
+        
+    if update.callback_query:
+        await update.callback_query.message.reply_text(msg, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     db = SessionLocal()
@@ -99,7 +122,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.close()
     
     if not user:
-        return await update.message.reply_text("You need to `/sync` first!")
+        return await update.message.reply_text("You need to sync your calendar link first!")
 
     msg = (
         "🏆 **YOUR ACADEMIC PROFILE**\n"
@@ -125,9 +148,26 @@ async def upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"🔹 `{d.assignment_title}`\n📊 {d.difficulty}\n⏳ *Due:* {d.due_date.strftime('%d %b, %I:%M %p')}\n\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def features(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = (
+        "💎 **PREMIUM ACADEMIC OS MODULES** 💎\n\n"
+        "Here are the advanced configurations running in this engine:\n\n"
+        "🌅 **1. Daily Morning Digest:** Gets a 8:00 AM summary of your battle plan.\n"
+        "🧠 **2. AI Syllabus RAG:** Upload PDFs and Gemini will quiz you.\n"
+        "🆘 **3. Anonymous Savior Mode:** Connects stuck students with those who finished the task.\n"
+        "⚙️ **4. Alert Settings:** Customize your 24h/6h/2h Tollywood meme frequency.\n"
+        "🎯 **5. Lock-In (Focus):** Pomodoro state-tracking to force deep work.\n\n"
+        "_Select a setting to configure:_"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ Alert Settings", callback_data="coming_soon"), InlineKeyboardButton("🌅 Morning Digest", callback_data="coming_soon")],
+        [InlineKeyboardButton("🆘 Savior Mode (Beta)", callback_data="coming_soon")]
+    ])
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=keyboard)
+
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_chat.id) != str(ADMIN_CHAT_ID):
-        return await update.message.reply_text("⛔ **Unauthorized.**", parse_mode="Markdown")
+        return await update.message.reply_text("⛔ **Unauthorized. Only the developer can access this.**", parse_mode="Markdown")
     db = SessionLocal()
     stats_msg = (
         "📊 **SYSTEM ANALYTICS DASHBOARD**\n"
@@ -147,7 +187,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     chat_id = query.message.chat_id
 
-    if data.startswith("done_"):
+    if data == "check_overdue":
+        await overdue(update, context)
+        return
+        
+    elif data == "coming_soon":
+        await query.message.reply_text("🚀 This premium feature is currently in Beta and will be unlocked soon!")
+        return
+
+    elif data.startswith("done_"):
         deadline_id = int(data.split("_")[1])
         db = SessionLocal()
         deadline = db.query(Deadline).filter(Deadline.id == deadline_id).first()
@@ -175,8 +223,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("sync", sync))
 application.add_handler(CommandHandler("upcoming", upcoming))
+application.add_handler(CommandHandler("overdue", overdue))
 application.add_handler(CommandHandler("profile", profile))
+application.add_handler(CommandHandler("features", features))
 application.add_handler(CommandHandler("stats", stats))
+application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), auto_sync_link))
 application.add_handler(CallbackQueryHandler(button_handler))
 
 # ---------------------------------------------------------
@@ -188,7 +239,6 @@ async def check_reminders():
     users = db.query(User).all()
     now_utc = datetime.now(timezone.utc)
 
-    # 1. Fetch & Analyze New Deadlines
     for user in users:
         try:
             res = requests.get(user.moodle_url, timeout=10)
@@ -199,14 +249,12 @@ async def check_reminders():
                 uid = str(event.get('uid'))
                 dtend = event.get('dtend').dt
                 
-                # Ensure timezone aware
                 due_date = dtend if isinstance(dtend, datetime) else datetime.combine(dtend, datetime.min.time())
                 if due_date.tzinfo is None:
                     due_date = due_date.replace(tzinfo=timezone.utc)
 
                 deadline = db.query(Deadline).filter(Deadline.telegram_chat_id == user.telegram_chat_id, Deadline.assignment_id == uid).first()
 
-                # IF NEW ASSIGNMENT -> CALL GEMINI AI
                 if not deadline:
                     ai_level, ai_tip = await analyze_task_with_ai(summary)
                     deadline = Deadline(
@@ -222,7 +270,6 @@ async def check_reminders():
         except Exception as e:
             print(f"Error fetching data for user {user.telegram_chat_id}: {e}")
 
-    # 2. Process Alerts for Pending Tasks
     pending = db.query(Deadline).filter(Deadline.is_completed == False, Deadline.due_date >= now_utc).all()
 
     for d in pending:
@@ -264,7 +311,6 @@ async def check_reminders():
     db.close()
     return {"status": "success"}
 
-# Start Telegram Bot Polling when FastAPI starts
 @app.on_event("startup")
 async def startup_event():
     await application.initialize()
