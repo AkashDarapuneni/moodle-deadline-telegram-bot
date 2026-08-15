@@ -29,7 +29,7 @@ async def _send_alert(chat_id: int, text: str) -> bool:
 
 async def _process_deadlines(deadlines: list[Deadline], now_utc: datetime) -> None:
     for deadline in deadlines:
-        time_remaining = deadline.due_date - now_utc
+        time_remaining = deadline.due_date.replace(tzinfo=None) - now_utc.replace(tzinfo=None)
         title = deadline.assignment_title
         chat_id = deadline.telegram_chat_id
 
