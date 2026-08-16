@@ -111,7 +111,7 @@ async def analyze_task_with_ai(title: str):
 # BOT COMMANDS (Onboarding, Overdue, Features)
 # ---------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎉") # Paper blast!
+    await update.message.reply_text("🎉") 
     msg = (
         "🎓 **Welcome to the Elite LMS Tracker (AI Edition)** ⚡\n\n"
         "To let my AI engine track your deadlines, I need your LMS Calendar Link. "
@@ -123,7 +123,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "5️⃣ Click **Get calendar URL**.\n\n"
         "🔗 *Just copy that URL and paste it directly in this chat! I will auto-detect it.*"
     )
-    # Premium Inline Buttons for Onboarding
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📺 Watch Tutorial", url="https://www.youtube.com/watch")], 
         [InlineKeyboardButton("💀 View Overdue Tasks", callback_data="check_overdue")]
@@ -148,7 +147,6 @@ async def sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎊")
     await update.message.reply_text("✅ **System Synced! AI Engine is now scanning your deadlines.**", parse_mode="Markdown")
 
-# AUTO DETECT LINK (No /sync needed)
 async def auto_sync_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if "export_execute.php" in text or "lms.kluniversity.in" in text:
@@ -158,7 +156,10 @@ async def auto_sync_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def overdue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
     db = SessionLocal()
-    now = datetime.now(timezone.utc)
+    
+    # Safe timezone conversion for Database queries
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    
     deadlines = db.query(Deadline).filter(Deadline.telegram_chat_id == chat_id, Deadline.is_completed == False, Deadline.due_date < now).order_by(Deadline.due_date.desc()).all()
     db.close()
     
@@ -196,7 +197,10 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     db = SessionLocal()
-    now = datetime.now(timezone.utc)
+    
+    # Safe timezone conversion
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    
     deadlines = db.query(Deadline).filter(Deadline.telegram_chat_id == chat_id, Deadline.is_completed == False, Deadline.due_date >= now).order_by(Deadline.due_date.asc()).all()
     db.close()
     
@@ -299,7 +303,9 @@ application.add_handler(CallbackQueryHandler(button_handler))
 async def check_reminders():
     db = SessionLocal()
     users = db.query(User).all()
-    now_utc = datetime.now(timezone.utc)
+    
+    # Safe timezone math fix!
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
     for user in users:
         try:
@@ -311,9 +317,13 @@ async def check_reminders():
                 uid = str(event.get('uid'))
                 dtend = event.get('dtend').dt
                 
+                # Format safety
                 due_date = dtend if isinstance(dtend, datetime) else datetime.combine(dtend, datetime.min.time())
-                if due_date.tzinfo is None:
-                    due_date = due_date.replace(tzinfo=timezone.utc)
+                
+                # Strip timezone before hitting DB
+                if getattr(due_date, 'tzinfo', None) is not None:
+                    due_date = due_date.astimezone(timezone.utc)
+                due_date = due_date.replace(tzinfo=None)
 
                 deadline = db.query(Deadline).filter(Deadline.telegram_chat_id == user.telegram_chat_id, Deadline.assignment_id == uid).first()
 
@@ -356,7 +366,6 @@ async def check_reminders():
             alert_key, d.sent_50m_alert = "50m", True
 
         if alert_key:
-            # THIS RANDOMLY PICKS 1 OUT OF THE 10+ OPTIONS
             quote = random.choice(TFI_CRAZY_ALERTS[alert_key])
             msg = (
                 f"{quote}\n\n"
