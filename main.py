@@ -9,20 +9,22 @@ import google.generativeai as genai
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.request import HTTPXRequest
 
 from database import SessionLocal, User, Deadline
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "") # Automatically provided by Render
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
 app = FastAPI()
 
-# Initialize Telegram Application (Without updater for webhooks)
-application = Application.builder().token(TOKEN).updater(None).build()
+# Bulletproof Timeout Configuration for Render Network 
+request_defaults = HTTPXRequest(read_timeout=30.0, connect_timeout=30.0)
+application = Application.builder().token(TOKEN).updater(None).request(request_defaults).build()
 
 # ---------------------------------------------------------
 # TOLLYWOOD STEALTH ALERTS DICTIONARY
@@ -328,11 +330,14 @@ async def startup_event():
     await application.initialize()
     await application.start()
     
-    # Automatically tell Telegram to send updates to our Render Webhook URL
+    # Safe Webhook registration with error trapping
     if RENDER_URL:
         webhook_url = f"{RENDER_URL}/webhook"
-        await application.bot.set_webhook(webhook_url)
-        print(f"Webhook set to: {webhook_url}")
+        try:
+            await application.bot.set_webhook(webhook_url)
+            print(f"Webhook set successfully to: {webhook_url}")
+        except Exception as e:
+            print(f"Webhook setup warning: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
